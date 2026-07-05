@@ -50,8 +50,8 @@ header.bar{
 .avatar img{width:100%; height:100%; object-fit:cover; display:block;}
 .avatar.big{width:72px; height:72px; border-radius:20px; font-size:34px;}
 .mini-av{
-  width:22px; height:22px; border-radius:7px; overflow:hidden; flex-shrink:0;
-  display:inline-grid; place-items:center; font-size:12px;
+  width:26px; height:26px; border-radius:8px; overflow:hidden; flex-shrink:0;
+  display:inline-grid; place-items:center; font-size:14px;
 }
 .mini-av img{width:100%; height:100%; object-fit:cover; display:block;}
 .chip-meta{min-width:0;}
@@ -69,8 +69,14 @@ header.bar{
 #chat{flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:14px 14px 6px;}
 .msg{margin:0 0 14px; max-width:88%;}
 .msg.user{margin-left:auto;}
-.who{font-family:var(--mincho); font-size:12px; margin:0 0 4px 4px; opacity:.95;
-  display:flex; align-items:center; gap:6px;}
+.who{font-family:var(--mincho); font-size:14px; font-weight:700; margin:0 0 5px 4px; opacity:.95;
+  display:flex; align-items:center; gap:7px;}
+.msg-actions{display:flex; gap:8px; margin:8px 0 0 4px;}
+.act-chip{
+  font-size:12px; color:var(--muted); border:1px solid var(--line);
+  border-radius:999px; padding:6px 14px; background:none;
+}
+.act-chip:active{color:var(--text); background:rgba(255,255,255,.06);}
 .bubble{
   padding:10px 14px; border-radius:16px; line-height:1.8;
   white-space:pre-wrap; word-break:break-word; overflow-wrap:anywhere;
@@ -476,9 +482,16 @@ function renderChat() {
   let html = '';
   sess.messages.forEach((m, i) => {
     if (m.role === 'assistant') {
+      let act = '';
+      if (i === sess.messages.length - 1) {
+        act = '<div class="msg-actions">' +
+          '<button class="act-chip" data-act="copy">コピー</button>' +
+          (i > 0 ? '<button class="act-chip" data-act="regen">再生成</button>' : '') +
+          '</div>';
+      }
       html += '<div class="msg ai" data-i="' + i + '">' +
         '<div class="who" style="color:' + c.color + '">' + miniAv(c) + '<span>' + esc(c.name) + '</span></div>' +
-        '<div class="bubble" style="border-left-color:' + c.color + '">' + formatRP(m.content) + '</div></div>';
+        '<div class="bubble" style="border-left-color:' + c.color + '">' + formatRP(m.content) + '</div>' + act + '</div>';
     } else {
       html += '<div class="msg user" data-i="' + i + '"><div class="bubble">' + formatRP(m.content) + '</div></div>';
     }
@@ -486,6 +499,27 @@ function renderChat() {
   box.innerHTML = html;
   box.querySelectorAll('.msg').forEach(el => {
     el.addEventListener('click', () => openSheet(parseInt(el.dataset.i, 10)));
+  });
+  box.querySelectorAll('.act-chip').forEach(ch => {
+    ch.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (busy) return;
+      const s2 = activeSession();
+      if (!s2 || !s2.messages.length) return;
+      const li = s2.messages.length - 1;
+      const lm = s2.messages[li];
+      if (lm.role !== 'assistant') return;
+      if (ch.dataset.act === 'copy') {
+        if (navigator.clipboard) navigator.clipboard.writeText(lm.content).then(() => toast('コピーした'));
+        else toast('この環境ではコピーできない');
+      } else if (ch.dataset.act === 'regen' && li > 0) {
+        s2.messages.splice(li, 1);
+        s2.updated = Date.now();
+        saveSessions();
+        renderChat();
+        generate();
+      }
+    });
   });
   scrollBottom();
 }
