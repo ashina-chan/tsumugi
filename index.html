@@ -1276,7 +1276,7 @@ function buildMemoBlock(level) {
   if (!memos.length) return '';
   const lines = memos.map(m => '- ' + m.text).join('\n');
   return '\n\n# ユーザーのメモ(興味・アイデア・気になっていること)\n' + lines +
-    '\n会話の自然な流れの中で話題にしてもよい。強制的に持ち出す必要はない。';
+    '\nユーザーが関心を持っている話題。会話のきっかけとして積極的に触れて良い。';
 }
 function buildTodoBlock(level) {
   if (!level || level === 'none') return '';
