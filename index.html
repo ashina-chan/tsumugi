@@ -1995,6 +1995,7 @@ async function extractShopping(m) {
     let src = stripThink(m.content).trim();
     if (src.length > 8000) src = src.slice(0, 8000);
     const p = '以下の文章から、買い物で購入すべき食材・材料・品物だけを抽出せよ。分量が書かれていれば品名に含める。料理名・手順・説明文は含めるな。' +
+      '必ず文章中に登場する具体的な品名をそのまま使え。"item1"や"品目A"のようなプレースホルダーや抽象的な名前は絶対に使うな。' +
       '出力はJSON配列のみ(例: ["豚こま肉 300g","玉ねぎ 2個"])。前置き・後書き・コードブロック記号は一切書くな。\n\n---\n' + src;
     const out = (await oneShot(p, 700)).trim();
     const mArr = out.match(/\[[\s\S]*\]/);
