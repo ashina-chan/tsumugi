@@ -76,6 +76,26 @@ header.bar{
 .who{font-family:var(--mincho); font-size:14px; font-weight:700; margin:0 0 5px 4px; opacity:.95;
   display:flex; align-items:center; gap:7px;}
 .msg-actions{display:flex; gap:8px; margin:8px 0 0 4px;}
+.ss-select .msg{cursor:pointer; transition:background .15s;}
+.ss-select .msg:hover{background:rgba(255,255,255,0.04);}
+.msg.ss-picked{background:var(--indigo) !important; border-radius:12px;}
+.msg.ss-in-range{background:rgba(54,66,107,0.35); border-radius:8px;}
+.ss-bar{
+  position:fixed; bottom:0; left:0; right:0; z-index:200;
+  display:flex; align-items:center; justify-content:center; gap:12px;
+  padding:14px 16px calc(14px + env(safe-area-inset-bottom));
+  background:var(--panel); border-top:1px solid var(--line);
+}
+.ss-bar button{
+  font-size:14px; padding:10px 20px; border-radius:999px; border:none; cursor:pointer;
+}
+.ss-bar .ss-ok{background:var(--amber); color:#1a1a1a; font-weight:700;}
+.ss-bar .ss-cancel{background:var(--field); color:var(--text);}
+.ss-bar .ss-mask-toggle{
+  font-size:12px; color:var(--muted); background:none; border:1px solid var(--line);
+  padding:8px 14px;
+}
+.ss-bar .ss-mask-toggle.on{color:var(--amber); border-color:var(--amber);}
 .act-chip{
   font-size:12px; color:var(--muted); border:1px solid var(--line);
   border-radius:999px; padding:6px 14px; background:none;
@@ -2076,24 +2096,113 @@ $('btnMemSum').addEventListener('click', async () => {
 });
 
 /* ---------------- screenshot ---------------- */
-$('btnSS').addEventListener('click', () => {
-  const sess = activeSession();
+var ssState = { active: false, picks: [], mask: false, cleanup: null };
+
+function exitSSSelect() {
+  if (!ssState.active) return;
+  ssState.active = false;
+  ssState.picks = [];
+  var chat = $('chat');
+  chat.classList.remove('ss-select');
+  chat.querySelectorAll('.ss-picked,.ss-in-range').forEach(function(el) {
+    el.classList.remove('ss-picked', 'ss-in-range');
+  });
+  var bar = document.querySelector('.ss-bar');
+  if (bar) bar.remove();
+  if (ssState.cleanup) { ssState.cleanup(); ssState.cleanup = null; }
+}
+
+function enterSSSelect() {
+  closeSheet();
+  ssState.active = true;
+  ssState.picks = [];
+  ssState.mask = false;
+  var chat = $('chat');
+  chat.classList.add('ss-select');
+  toast('最初のメッセージをタップ');
+
+  function onClick(e) {
+    var msg = e.target.closest('.msg[data-i]');
+    if (!msg) return;
+    e.preventDefault(); e.stopPropagation();
+    var idx = parseInt(msg.getAttribute('data-i'));
+    if (ssState.picks.length === 0) {
+      ssState.picks.push(idx);
+      msg.classList.add('ss-picked');
+      toast('最後のメッセージをタップ');
+    } else if (ssState.picks.length === 1) {
+      ssState.picks.push(idx);
+      updateSSRange();
+    } else {
+      ssState.picks = [idx];
+      chat.querySelectorAll('.ss-picked,.ss-in-range').forEach(function(el) {
+        el.classList.remove('ss-picked', 'ss-in-range');
+      });
+      msg.classList.add('ss-picked');
+      toast('最後のメッセージをタップ');
+    }
+  }
+  chat.addEventListener('click', onClick, true);
+  ssState.cleanup = function() { chat.removeEventListener('click', onClick, true); };
+
+  var bar = document.createElement('div');
+  bar.className = 'ss-bar';
+  bar.innerHTML = '<button class="ss-mask-toggle">名前を伏せる</button>' +
+    '<button class="ss-ok" disabled>スクショ</button>' +
+    '<button class="ss-cancel">やめる</button>';
+  bar.querySelector('.ss-cancel').addEventListener('click', exitSSSelect);
+  bar.querySelector('.ss-mask-toggle').addEventListener('click', function() {
+    ssState.mask = !ssState.mask;
+    this.classList.toggle('on', ssState.mask);
+  });
+  bar.querySelector('.ss-ok').addEventListener('click', function() {
+    var p = ssState.picks.slice().sort(function(a, b) { return a - b; });
+    var from = p[0], to = p[1];
+    exitSSSelect();
+    screenshotChat(ssState.mask, from, to);
+  });
+  document.body.appendChild(bar);
+}
+
+function updateSSRange() {
+  var chat = $('chat');
+  chat.querySelectorAll('.ss-picked,.ss-in-range').forEach(function(el) {
+    el.classList.remove('ss-picked', 'ss-in-range');
+  });
+  var p = ssState.picks.slice().sort(function(a, b) { return a - b; });
+  chat.querySelectorAll('.msg[data-i]').forEach(function(el) {
+    var i = parseInt(el.getAttribute('data-i'));
+    if (i === p[0] || i === p[1]) el.classList.add('ss-picked');
+    else if (i > p[0] && i < p[1]) el.classList.add('ss-in-range');
+  });
+  var bar = document.querySelector('.ss-bar');
+  if (bar) bar.querySelector('.ss-ok').disabled = false;
+}
+
+$('btnSS').addEventListener('click', function() {
+  var sess = activeSession();
   if (!sess || !sess.messages.length) { toast('スクショする会話がない'); return; }
-  const body = $('sheetBody');
+  var body = $('sheetBody');
   body.innerHTML = '';
-  const ic1 = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>';
-  const ic2 = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M1 1l22 22"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/></svg>';
-  [['スクリーンショットを保存', ic1, false], ['名前を伏せてスクショ', ic2, true]].forEach(([label, svg, mask]) => {
-    const b = document.createElement('button');
-    b.innerHTML = svg + '<span>' + label + '</span>';
-    b.addEventListener('click', () => { closeSheet(); screenshotChat(mask); });
+  var ic1 = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>';
+  var ic2 = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/></svg>';
+  var ic3 = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M1 1l22 22"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/></svg>';
+  var items = [
+    ['全体をスクショ', ic1, function() { closeSheet(); screenshotChat(false); }],
+    ['範囲を選んでスクショ', ic2, enterSSSelect],
+    ['名前を伏せてスクショ', ic3, function() { closeSheet(); screenshotChat(true); }]
+  ];
+  items.forEach(function(item) {
+    var b = document.createElement('button');
+    b.innerHTML = item[1] + '<span>' + item[0] + '</span>';
+    b.addEventListener('click', item[2]);
     body.appendChild(b);
   });
   $('scrim').classList.add('show');
   $('sheet').classList.add('open');
 });
 
-async function screenshotChat(doMask) {
+async function screenshotChat(doMask, fromIdx, toIdx) {
   const sess = activeSession();
   if (!sess || !sess.messages.length) return;
   toast('スクショ準備中…');
@@ -2105,7 +2214,11 @@ async function screenshotChat(doMask) {
   var Fn = { n:'15px sans-serif', b:'bold 15px sans-serif', h:'bold 17px sans-serif',
     m:'13px monospace', nm:'bold 14px serif', t:'10px sans-serif' };
   var nmap = new Map(), nlbl = 'ABCDEFGHIJ', nli = 0;
-  var items = sess.messages.map(function(m) {
+  var srcMsgs = sess.messages;
+  if (fromIdx != null && toIdx != null) {
+    srcMsgs = srcMsgs.filter(function(_, i) { return i >= fromIdx && i <= toIdx; });
+  }
+  var items = srcMsgs.map(function(m) {
     var isAI = m.role === 'assistant';
     var name = '', color = COL.mut;
     if (isAI) {
