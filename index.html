@@ -83,8 +83,32 @@ header.bar{
 .act-chip:active{color:var(--text); background:rgba(255,255,255,.06);}
 .bubble{
   padding:10px 14px; border-radius:16px; line-height:1.8;
-  white-space:pre-wrap; word-break:break-word; overflow-wrap:anywhere;
+  word-break:break-word; overflow-wrap:anywhere;
 }
+.bubble h1,.bubble h2,.bubble h3,.bubble h4,.bubble h5,.bubble h6{
+  font-family:var(--mincho); margin:8px 0 4px; line-height:1.4; font-size:1em;
+}
+.bubble h1{font-size:1.3em;} .bubble h2{font-size:1.15em;} .bubble h3{font-size:1.05em;}
+.bubble ul,.bubble ol{margin:4px 0; padding-left:1.6em;}
+.bubble li{margin:2px 0; line-height:1.6;}
+.bubble blockquote{
+  margin:4px 0; padding:4px 10px;
+  border-left:3px solid var(--line); color:var(--muted);
+}
+.bubble pre{
+  margin:6px 0; padding:10px 12px; border-radius:8px;
+  background:var(--field); overflow-x:auto; white-space:pre-wrap;
+  word-break:break-all; font-size:13px; line-height:1.5;
+}
+.bubble code{
+  font-family:ui-monospace,'Cascadia Code','Fira Code',monospace; font-size:0.9em;
+}
+.bubble :not(pre)>code{
+  background:var(--field); padding:1px 5px; border-radius:4px;
+}
+.bubble hr{border:none; border-top:1px solid var(--line); margin:8px 0;}
+.bubble strong{font-weight:700;}
+.bubble del{text-decoration:line-through; opacity:.7;}
 .msg.ai .bubble{background:var(--panel2); border-bottom-left-radius:5px; border-left:2px solid var(--amber);}
 .msg.user .bubble{background:var(--indigo); border-bottom-right-radius:5px;}
 .bubble em{color:var(--muted); font-style:italic;}
@@ -686,22 +710,72 @@ function esc(s) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 function fmtBody(s) {
-  // *action* -> em (roleplay convention), newlines kept by pre-wrap
   return esc(s).replace(/\*([^*\n]{1,200})\*/g, '<em>$1</em>');
 }
+function mdInline(s, ic) {
+  s = esc(s);
+  s = s.replace(/\x00I(\d+)\x00/g, function(_, i) { return '<code>' + esc(ic[+i]) + '</code>'; });
+  s = s.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
+  s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  s = s.replace(/\*([^*\n]{1,200})\*/g, '<em>$1</em>');
+  s = s.replace(/~~(.+?)~~/g, '<del>$1</del>');
+  return s;
+}
+function renderMarkdown(raw) {
+  if (!raw) return '';
+  var codes = [];
+  var src = raw.replace(/```(\w*)\n([\s\S]*?)(?:```|$)/g, function(_, lang, code) {
+    codes.push(code); return '\x00C' + (codes.length - 1) + '\x00';
+  });
+  var ic = [];
+  src = src.replace(/`([^`\n]+)`/g, function(_, c) {
+    ic.push(c); return '\x00I' + (ic.length - 1) + '\x00';
+  });
+  var lines = src.split('\n'), html = '', i = 0;
+  while (i < lines.length) {
+    var line = lines[i];
+    var cm = line.match(/^\x00C(\d+)\x00$/);
+    if (cm) { html += '<pre><code>' + esc(codes[+cm[1]]).replace(/\n+$/, '') + '</code></pre>'; i++; continue; }
+    var hm = line.match(/^(#{1,6})\s+(.+?)(?:\s*#+)?$/);
+    if (hm) { html += '<h' + hm[1].length + '>' + mdInline(hm[2], ic) + '</h' + hm[1].length + '>'; i++; continue; }
+    if (/^[-]{3,}\s*$|^[*]{3,}\s*$|^[_]{3,}\s*$/.test(line)) { html += '<hr>'; i++; continue; }
+    if (/^>\s?/.test(line)) {
+      var bq = [];
+      while (i < lines.length && /^>\s?/.test(lines[i])) { bq.push(lines[i].replace(/^>\s?/, '')); i++; }
+      html += '<blockquote>' + bq.map(function(l) { return mdInline(l, ic); }).join('<br>') + '</blockquote>';
+      continue;
+    }
+    if (/^\s*[-*+]\s+/.test(line)) {
+      html += '<ul>';
+      while (i < lines.length && /^\s*[-*+]\s+/.test(lines[i])) {
+        html += '<li>' + mdInline(lines[i].replace(/^\s*[-*+]\s+/, ''), ic) + '</li>'; i++;
+      }
+      html += '</ul>'; continue;
+    }
+    if (/^\s*\d+[.)]\s+/.test(line)) {
+      html += '<ol>';
+      while (i < lines.length && /^\s*\d+[.)]\s+/.test(lines[i])) {
+        html += '<li>' + mdInline(lines[i].replace(/^\s*\d+[.)]\s+/, ''), ic) + '</li>'; i++;
+      }
+      html += '</ol>'; continue;
+    }
+    if (!line.trim()) { i++; html += '<br>'; continue; }
+    html += mdInline(line, ic) + '<br>'; i++;
+  }
+  return html.replace(/(<br>)+$/, '');
+}
 function formatRP(s) {
-  // <think>/<thinking>/<thought> ブロックを折りたたみに変換（閉じタグ未到達＝ストリーミング中も対応）
   const re = /<(think|thinking|thought)>([\s\S]*?)(?:<\/\1>|$)/gi;
   let out = '', last = 0, m;
   while ((m = re.exec(s)) !== null) {
-    out += fmtBody(s.slice(last, m.index).replace(/\n+$/, ''));
+    out += renderMarkdown(s.slice(last, m.index).replace(/\n+$/, ''));
     const closed = m[0].toLowerCase().endsWith('</' + m[1].toLowerCase() + '>');
     out += '<details class="think"><summary>' + (closed ? '思考ログ' : '考え中…') + '</summary>' +
       '<div class="thinkBody">' + fmtBody(m[2].trim()) + '</div></details>';
     last = re.lastIndex;
     while (s[last] === '\n') last++;
   }
-  out += fmtBody(s.slice(last));
+  out += renderMarkdown(s.slice(last));
   return out;
 }
 function timeStr(t) {
