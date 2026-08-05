@@ -305,6 +305,9 @@ input[type=range]{padding:0; height:32px; accent-color:var(--amber); background:
   <button class="icon-btn" id="btnTodo" aria-label="TODO">
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3 8-8"/><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/></svg>
   </button>
+  <button class="icon-btn" id="btnSS" aria-label="スクリーンショット">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+  </button>
   <button class="icon-btn" id="btnSettings" aria-label="設定">
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 8h9M19 8h1M4 16h1M11 16h9"/><circle cx="16" cy="8" r="2.5"/><circle cx="8" cy="16" r="2.5"/></svg>
   </button>
@@ -2071,6 +2074,214 @@ $('btnMemSum').addEventListener('click', async () => {
   setBusyUI(false);
   closeScreen('scrSessions');
 });
+
+/* ---------------- screenshot ---------------- */
+$('btnSS').addEventListener('click', () => {
+  const sess = activeSession();
+  if (!sess || !sess.messages.length) { toast('スクショする会話がない'); return; }
+  const body = $('sheetBody');
+  body.innerHTML = '';
+  const ic1 = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>';
+  const ic2 = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M1 1l22 22"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/></svg>';
+  [['スクリーンショットを保存', ic1, false], ['名前を伏せてスクショ', ic2, true]].forEach(([label, svg, mask]) => {
+    const b = document.createElement('button');
+    b.innerHTML = svg + '<span>' + label + '</span>';
+    b.addEventListener('click', () => { closeSheet(); screenshotChat(mask); });
+    body.appendChild(b);
+  });
+  $('scrim').classList.add('show');
+  $('sheet').classList.add('open');
+});
+
+async function screenshotChat(doMask) {
+  const sess = activeSession();
+  if (!sess || !sess.messages.length) return;
+  toast('スクショ準備中…');
+  const c = activeChar();
+  var W = 400, PAD = 14, BP = 12, GAP = 14, dpr = 2;
+  var MBW = Math.floor(W * 0.85), LH = 27, CLH = 22;
+  var COL = { bg:'#1d1923', p2:'#2c2538', ind:'#36426b', fld:'#151119',
+    txt:'#ece5da', mut:'#9a90a4', ln:'rgba(255,255,255,0.08)' };
+  var Fn = { n:'15px sans-serif', b:'bold 15px sans-serif', h:'bold 17px sans-serif',
+    m:'13px monospace', nm:'bold 14px serif', t:'10px sans-serif' };
+  var nmap = new Map(), nlbl = 'ABCDEFGHIJ', nli = 0;
+  var items = sess.messages.map(function(m) {
+    var isAI = m.role === 'assistant';
+    var name = '', color = COL.mut;
+    if (isAI) {
+      var spk = (m.charId ? chars.find(function(x){ return x.id === m.charId; }) : null) || c;
+      if (spk) { name = spk.name; color = spk.color; }
+      if (doMask && name) {
+        if (!nmap.has(name)) { nmap.set(name, nlbl[nli] || String(nli + 1)); nli++; }
+        name = nmap.get(name);
+      }
+    }
+    var text = isAI ? stripThink(m.content).trim() : m.content;
+    return { isAI: isAI, name: name, color: color, text: text, time: m.time };
+  });
+  var mc = document.createElement('canvas').getContext('2d');
+  function wrap(text, font, maxW) {
+    mc.font = font; var out = [];
+    var ps = text.split('\n');
+    for (var pi = 0; pi < ps.length; pi++) {
+      var p = ps[pi];
+      if (!p) { out.push(''); continue; }
+      var ln = '';
+      for (var ci = 0; ci < p.length; ci++) {
+        if (mc.measureText(ln + p[ci]).width > maxW && ln) { out.push(ln); ln = p[ci]; }
+        else ln += p[ci];
+      }
+      if (ln) out.push(ln);
+    }
+    return out;
+  }
+  function smd(s) {
+    return s.replace(/\*\*\*(.+?)\*\*\*/g, '$1').replace(/\*\*(.+?)\*\*/g, '$1')
+      .replace(/\*([^*\n]+)\*/g, '$1').replace(/~~(.+?)~~/g, '$1').replace(/`([^`\n]+)`/g, '$1');
+  }
+  function parseMsg(text) {
+    var blocks = [], cw = MBW - BP * 2;
+    var codeRe = /```\w*\n([\s\S]*?)(?:```|$)/g;
+    var last = 0, m2, parts = [];
+    while ((m2 = codeRe.exec(text)) !== null) {
+      if (m2.index > last) parts.push({ t: 'txt', r: text.slice(last, m2.index) });
+      parts.push({ t: 'code', r: m2[1].replace(/\n$/, '') });
+      last = codeRe.lastIndex;
+    }
+    if (last < text.length) parts.push({ t: 'txt', r: text.slice(last) });
+    for (var pi = 0; pi < parts.length; pi++) {
+      var p = parts[pi];
+      if (p.t === 'code') { blocks.push({ t: 'code', l: wrap(p.r, Fn.m, cw - 20), f: Fn.m }); continue; }
+      var rawLines = p.r.split('\n');
+      for (var ri = 0; ri < rawLines.length; ri++) {
+        var raw = rawLines[ri];
+        var hm = raw.match(/^#{1,6}\s+(.+?)$/);
+        if (hm) { blocks.push({ t: 'h', l: wrap(smd(hm[1]), Fn.h, cw), f: Fn.h }); continue; }
+        if (/^[-*_]{3,}\s*$/.test(raw)) { blocks.push({ t: 'hr' }); continue; }
+        if (/^>\s?/.test(raw)) { blocks.push({ t: 'q', l: wrap(smd(raw.replace(/^>\s?/, '')), Fn.n, cw - 16), f: Fn.n }); continue; }
+        if (/^\s*[-*+]\s+/.test(raw)) { blocks.push({ t: 'txt', l: wrap('• ' + smd(raw.replace(/^\s*[-*+]\s+/, '')), Fn.n, cw), f: Fn.n }); continue; }
+        var olm = raw.match(/^\s*(\d+[.)]\s+)(.*)/);
+        if (olm) { blocks.push({ t: 'txt', l: wrap(olm[1] + smd(olm[2]), Fn.n, cw), f: Fn.n }); continue; }
+        if (!raw.trim()) { blocks.push({ t: 'empty' }); continue; }
+        blocks.push({ t: 'txt', l: wrap(smd(raw), Fn.n, cw), f: Fn.n });
+      }
+    }
+    return blocks;
+  }
+  var totalH = PAD;
+  var layout = items.map(function(item) {
+    var entry = { isAI: item.isAI, name: item.name, color: item.color, time: item.time,
+      y: totalH, blocks: parseMsg(item.text) };
+    var h = item.isAI ? 22 : 0, ch = 0;
+    for (var bi = 0; bi < entry.blocks.length; bi++) {
+      var b = entry.blocks[bi];
+      if (b.t === 'hr') ch += 16;
+      else if (b.t === 'empty') ch += LH * 0.4;
+      else if (b.t === 'code') ch += b.l.length * CLH + 16;
+      else ch += (b.l ? b.l.length : 0) * LH;
+    }
+    entry.bubbleH = ch + BP * 2;
+    h += entry.bubbleH + (item.time ? 18 : 0) + GAP;
+    var maxLW = 0;
+    for (var bi2 = 0; bi2 < entry.blocks.length; bi2++) {
+      var b2 = entry.blocks[bi2];
+      if (!b2.l) continue;
+      mc.font = b2.f || Fn.n;
+      for (var li2 = 0; li2 < b2.l.length; li2++) {
+        var w = mc.measureText(b2.l[li2]).width;
+        if (w > maxLW) maxLW = w;
+      }
+    }
+    entry.bubbleW = Math.min(MBW, Math.max(80, maxLW + BP * 2 + 6));
+    totalH += h;
+    return entry;
+  });
+  totalH += PAD;
+  if (totalH > 32000) { toast('会話が長すぎる。セッションを分けて'); return; }
+  var canvas = document.createElement('canvas');
+  canvas.width = W * dpr; canvas.height = totalH * dpr;
+  var ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  ctx.fillStyle = COL.bg; ctx.fillRect(0, 0, W, totalH);
+  function rr(x, y, w, h, tl, tr, br, bl) {
+    ctx.beginPath(); ctx.moveTo(x + tl, y);
+    ctx.lineTo(x + w - tr, y); ctx.quadraticCurveTo(x + w, y, x + w, y + tr);
+    ctx.lineTo(x + w, y + h - br); ctx.quadraticCurveTo(x + w, y + h, x + w - br, y + h);
+    ctx.lineTo(x + bl, y + h); ctx.quadraticCurveTo(x, y + h, x, y + h - bl);
+    ctx.lineTo(x, y + tl); ctx.quadraticCurveTo(x, y, x + tl, y);
+    ctx.closePath();
+  }
+  for (var ei = 0; ei < layout.length; ei++) {
+    var e = layout[ei];
+    var cy = e.y;
+    var bx = e.isAI ? PAD : (W - PAD - e.bubbleW);
+    if (e.isAI) {
+      ctx.font = Fn.nm; ctx.fillStyle = e.color;
+      ctx.fillText(e.name, PAD + 4, cy + 15); cy += 22;
+    }
+    var by = cy;
+    ctx.fillStyle = e.isAI ? COL.p2 : COL.ind;
+    rr(bx, by, e.bubbleW, e.bubbleH, 16, 16, e.isAI ? 16 : 5, e.isAI ? 5 : 16); ctx.fill();
+    if (e.isAI) { ctx.fillStyle = e.color; ctx.fillRect(bx, by + 4, 2, e.bubbleH - 8); }
+    var tx = bx + BP, ty = by + BP;
+    for (var bi3 = 0; bi3 < e.blocks.length; bi3++) {
+      var b3 = e.blocks[bi3];
+      if (b3.t === 'hr') {
+        ctx.strokeStyle = COL.ln; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(tx, ty + 8); ctx.lineTo(tx + e.bubbleW - BP * 2, ty + 8); ctx.stroke();
+        ty += 16; continue;
+      }
+      if (b3.t === 'empty') { ty += LH * 0.4; continue; }
+      if (b3.t === 'code') {
+        var cbh = b3.l.length * CLH + 12;
+        ctx.fillStyle = COL.fld; rr(tx, ty, e.bubbleW - BP * 2, cbh, 8, 8, 8, 8); ctx.fill();
+        ctx.font = Fn.m; ctx.fillStyle = COL.txt;
+        for (var cli = 0; cli < b3.l.length; cli++) ctx.fillText(b3.l[cli], tx + 10, ty + 6 + (cli + 0.75) * CLH);
+        ty += cbh + 4; continue;
+      }
+      if (b3.t === 'q') {
+        ctx.fillStyle = COL.ln; ctx.fillRect(tx, ty + 2, 3, b3.l.length * LH - 4);
+        ctx.font = Fn.n; ctx.fillStyle = COL.mut;
+        for (var qi = 0; qi < b3.l.length; qi++) ctx.fillText(b3.l[qi], tx + 12, ty + (qi + 0.75) * LH);
+        ty += b3.l.length * LH; continue;
+      }
+      ctx.font = b3.f || Fn.n; ctx.fillStyle = COL.txt;
+      if (b3.l) {
+        for (var ti = 0; ti < b3.l.length; ti++) ctx.fillText(b3.l[ti], tx, ty + (ti + 0.75) * LH);
+        ty += b3.l.length * LH;
+      }
+    }
+    cy = by + e.bubbleH;
+    if (e.time) {
+      ctx.font = Fn.t; ctx.fillStyle = COL.mut; ctx.globalAlpha = 0.75;
+      var ts = timeStr(e.time);
+      if (e.isAI) ctx.fillText(ts, PAD + 4, cy + 12);
+      else ctx.fillText(ts, W - PAD - ctx.measureText(ts).width, cy + 12);
+      ctx.globalAlpha = 1;
+    }
+  }
+  try {
+    var png = await new Promise(function(r) { canvas.toBlob(r, 'image/png'); });
+    if (!png) throw new Error('PNG変換失敗');
+    var file = new File([png], 'tsumugi_chat.png', { type: 'image/png' });
+    var shared = false;
+    try {
+      if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file] }); shared = true;
+      }
+    } catch (e2) { if (e2.name === 'AbortError') return; }
+    if (!shared) {
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(png);
+      a.download = 'tsumugi_chat.png';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function() { URL.revokeObjectURL(a.href); }, 5000);
+      toast('スクショを保存した');
+    }
+  } catch (err) {
+    toast('スクショ失敗: ' + (err && err.message ? err.message : String(err)));
+  }
+}
 
 /* ---------------- settings UI ---------------- */
 function openSettings() {
