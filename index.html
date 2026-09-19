@@ -209,6 +209,9 @@ footer.composer{
   opacity:0; pointer-events:none; transition:opacity .24s ease;
 }
 #sideBg.show{opacity:1; pointer-events:auto;}
+/* この2画面は設定画面から開くので、設定画面より上に重ねる
+   (同じz-indexだとDOM順で後ろのscrSettingsが上に来てしまう) */
+#scrPrompts, #scrModels{z-index:24;}
 .li-prev{
   font-size:12px; color:var(--muted); margin-top:3px;
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
