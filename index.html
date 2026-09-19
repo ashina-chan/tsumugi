@@ -582,9 +582,10 @@ input[type=range]{padding:0; height:32px; accent-color:var(--amber); background:
       <input id="meModel" placeholder="例: anthropic/claude-sonnet-4" autocomplete="off">
       <label>APIキー</label>
       <div class="key-row">
-        <input id="meKey" type="password" placeholder="このモデルで使うキー" autocomplete="off">
+        <input id="meKey" type="password" placeholder="この接続先で使うキー" autocomplete="off">
         <button id="meKeyShow" type="button">表示</button>
       </div>
+      <p class="hint">キーは接続先ごとに覚える。同じURLのモデルを追加するときは自動で入るので、貼り直さなくていい。ここで書き換えると、その接続先の登録すべてに反映される。</p>
       <label>使用するシスプロ</label>
       <select id="mePrompt"></select>
       <p class="hint">紐づけておくと、このモデルを選んだときにキャラのシスプロの代わりに使われる。</p>
@@ -889,9 +890,26 @@ let prompts = LS.get('tsu_prompts', []);
 const savePrompts = () => LS.set('tsu_prompts', prompts);
 let models = LS.get('tsu_models', []);
 const saveModels = () => LS.set('tsu_models', models);
+
+/* APIキーは接続先(エンドポイント)ごとに1つ持つ。
+   同じURLのモデルをいくつ登録してもキーを貼り直さなくていいようにするため。 */
+let apiKeys = LS.get('tsu_keys', {});
+const saveApiKeys = () => LS.set('tsu_keys', apiKeys);
+const keyOf = (kind, baseUrl) =>
+  kind === 'anthropic' ? 'anthropic' : ('openai|' + String(baseUrl || '').replace(/\/+$/, ''));
+/* 旧形式(モデルごとにキーを持っていた頃)の登録を接続先ごとのキーへ寄せる */
+(() => {
+  let moved = false;
+  models.forEach(m => {
+    const k = keyOf(m.kind, m.baseUrl);
+    if (m.apiKey && !apiKeys[k]) { apiKeys[k] = m.apiKey; moved = true; }
+  });
+  if (moved) saveApiKeys();
+})();
 let editingPromptId = null;
 let editingModelId = null;
 let meKindSel = 'openai';
+let meKeyAuto = '';
 
 let busy = false;
 let abortCtl = null;
@@ -2097,10 +2115,11 @@ function resolveApi(cArg) {
   const mdl = resolveModelFor(c);
   if (mdl) {
     const p = mdl.kind === 'anthropic' ? 'anthropic' : 'openai';
+    const shared = apiKeys[keyOf(mdl.kind, mdl.baseUrl)] || '';
     return {
       prov: p,
       model: (c && c.apiModel) || mdl.model,
-      apiKey: (c && c.apiKey) || mdl.apiKey,
+      apiKey: (c && c.apiKey) || shared || mdl.apiKey,
       baseUrl: p === 'anthropic' ? null : ((c && c.baseUrl) || mdl.baseUrl),
       think: think,
       promptId: mdl.promptId || ''
@@ -2591,7 +2610,9 @@ function openModelEdit(id) {
   renderMeKindSeg();
   $('meBase').value = m ? (m.baseUrl || '') : '';
   $('meModel').value = m ? (m.model || '') : '';
-  $('meKey').value = m ? (m.apiKey || '') : '';
+  // キーは接続先ごとの共有分を出す(旧形式でモデルが持っていた場合はそれを使う)
+  $('meKey').value = apiKeys[keyOf(meKindSel, $('meBase').value.trim())] || (m ? (m.apiKey || '') : '');
+  meKeyAuto = $('meKey').value;
   fillPromptSelect($('mePrompt'), m ? m.promptId : '');
   $('meDelete').style.display = m ? 'block' : 'none';
   $('modelListWrap').style.display = 'none';
@@ -2605,12 +2626,22 @@ function closeModelEdit() {
 $('btnModels').addEventListener('click', () => { closeModelEdit(); openScreen('scrModels'); });
 $('btnAddModel').addEventListener('click', () => openModelEdit(null));
 $('meCancel').addEventListener('click', closeModelEdit);
+/* 接続先が変わったらキー欄をその接続先のものに差し替える。
+   ただし手で入れた値は勝手に消さない。 */
+function syncMeKey() {
+  const cur = $('meKey').value;
+  if (cur && cur !== meKeyAuto) return;
+  const v = apiKeys[keyOf(meKindSel, $('meBase').value.trim())] || '';
+  $('meKey').value = v;
+  meKeyAuto = v;
+}
 document.querySelectorAll('#meKindSeg button').forEach(b => {
-  b.addEventListener('click', () => { meKindSel = b.dataset.v; renderMeKindSeg(); });
+  b.addEventListener('click', () => { meKindSel = b.dataset.v; renderMeKindSeg(); syncMeKey(); });
 });
 document.querySelectorAll('#mePreset button').forEach(b => {
-  b.addEventListener('click', () => { $('meBase').value = b.dataset.u; });
+  b.addEventListener('click', () => { $('meBase').value = b.dataset.u; syncMeKey(); });
 });
+$('meBase').addEventListener('input', syncMeKey);
 $('meKeyShow').addEventListener('click', () => {
   const inp = $('meKey');
   const isPass = inp.type === 'password';
@@ -2624,12 +2655,18 @@ $('meSave').addEventListener('click', () => {
   if (!model) { toast('モデル名は必須'); return; }
   const base = $('meBase').value.trim();
   if (meKindSel !== 'anthropic' && !base) { toast('ベースURLを入れて'); return; }
+  const url = meKindSel === 'anthropic' ? '' : base.replace(/\/+$/, '');
+  // キーは接続先ごとに保存する。同じURLの登録が増えても貼り直さなくていい
+  const entered = $('meKey').value.trim();
+  const kk = keyOf(meKindSel, url);
+  if (entered) { apiKeys[kk] = entered; saveApiKeys(); }
+  else if (!apiKeys[kk]) toast('この接続先のAPIキーがまだ未設定');
   const data = {
     label: label,
     kind: meKindSel,
-    baseUrl: meKindSel === 'anthropic' ? '' : base.replace(/\/+$/, ''),
+    baseUrl: url,
     model: model,
-    apiKey: $('meKey').value.trim(),
+    apiKey: '',
     promptId: $('mePrompt').value || ''
   };
   if (editingModelId) Object.assign(models.find(x => x.id === editingModelId), data);
@@ -2689,7 +2726,7 @@ $('btnExport').addEventListener('click', async () => {
     toast('エクスポート失敗: 画像の読み出しでエラー');
     return;
   }
-  const data = { app: 'tsumugi', ver: 1, exported: d.toISOString(), chars: charsOut, sessions: sessionsOut, active, settings, todos, memos, shop, shopHist, prompts, models };
+  const data = { app: 'tsumugi', ver: 1, exported: d.toISOString(), chars: charsOut, sessions: sessionsOut, active, settings, todos, memos, shop, shopHist, prompts, models, apiKeys };
   const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -2729,6 +2766,7 @@ $('impFile').addEventListener('change', (e) => {
       if (Array.isArray(d.shopHist)) LS.set('tsu_shopHist', d.shopHist);
       if (Array.isArray(d.prompts)) LS.set('tsu_prompts', d.prompts);
       if (Array.isArray(d.models)) LS.set('tsu_models', d.models);
+      if (d.apiKeys && typeof d.apiKeys === 'object') LS.set('tsu_keys', d.apiKeys);
       toast('復元した。再読み込みする');
       setTimeout(() => location.reload(), 600);
     } catch (err) {
