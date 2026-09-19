@@ -687,6 +687,73 @@ const LS = {
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { toast('保存に失敗。容量がいっぱいかも'); } }
 };
 
+/* ---------------- IndexedDB: 画像ストア ----------------
+   画像(キャラアイコン/チャット添付)はlocalStorageの5MB上限を圧迫するため
+   IndexedDBへ逃がす。localStorage側には "img_xxxx" のIDだけを残す。 */
+const IDB = (() => {
+  const DB_NAME = 'tsumugi_images', DB_VER = 1, STORE = 'images';
+  let dbp = null;
+  const open = () => dbp || (dbp = new Promise((res, rej) => {
+    const rq = indexedDB.open(DB_NAME, DB_VER);
+    rq.onupgradeneeded = () => {
+      const db = rq.result;
+      if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE, { keyPath: 'id' });
+    };
+    rq.onsuccess = () => res(rq.result);
+    rq.onerror = () => rej(rq.error);
+  }));
+  const run = (mode, fn) => open().then(db => new Promise((res, rej) => {
+    const t = db.transaction(STORE, mode);
+    const rq = fn(t.objectStore(STORE));
+    t.oncomplete = () => res(rq ? rq.result : undefined);
+    t.onerror = () => rej(t.error);
+    t.onabort = () => rej(t.error);
+  }));
+  return {
+    get: (id) => run('readonly', st => st.get(id)),
+    put: (rec) => run('readwrite', st => st.put(rec)),
+    del: (id) => run('readwrite', st => st.delete(id))
+  };
+})();
+
+const isImgId = (v) => typeof v === 'string' && v.slice(0, 4) === 'img_';
+const isImgData = (v) => typeof v === 'string' && v.slice(0, 5) === 'data:';
+
+async function imgSave(base64) {
+  const id = 'img_' + uid();
+  await IDB.put({ id: id, data: base64, created: Date.now() });
+  return id;
+}
+async function imgLoad(id) {
+  if (!id) return '';
+  if (!isImgId(id)) return id;            // 旧形式(Base64)はそのまま返す
+  const rec = await IDB.get(id);
+  return rec ? rec.data : '';
+}
+async function imgDelete(id) {
+  if (!isImgId(id)) return;
+  try { await IDB.del(id); } catch (e) { /* 消せなくても致命的ではない */ }
+}
+
+/* 読み込みが非同期になるので、描画時はまずプレースホルダーを置き、
+   hydrateImgs()が後からsrcを差し込む。 */
+function imgPlaceholder(v, cls) {
+  if (!v) return '';
+  const a = cls ? ' class="' + cls + '"' : '';
+  if (!isImgId(v)) return '<img' + a + ' src="' + v + '" alt="">';
+  return '<img' + a + ' data-img="' + v + '" alt="">';
+}
+async function hydrateImgs(root) {
+  const els = (root || document).querySelectorAll('img[data-img]');
+  for (const el of els) {
+    const id = el.getAttribute('data-img');
+    el.removeAttribute('data-img');
+    let d = '';
+    try { d = await imgLoad(id); } catch (e) { d = ''; }
+    if (d) el.src = d; else el.remove();   // 見つからない画像は消してフォールバック表示に任せる
+  }
+}
+
 const DEF_SETTINGS = {
   provider: 'anthropic',
   anthropic: { apiKey: '', model: 'claude-sonnet-4-20250514' },
@@ -725,8 +792,11 @@ let ceTodoSel = 'none';
 let ceMemoSel = 'off';
 let ceShopSel = 'off';
 let ceThinkSel = '';
-let ceImg = '';
+let ceImg = '';        // 編集中の下書き(Base64)。保存確定時にだけIndexedDBへ書く
+let ceImgId = '';      // 編集対象キャラが元々持っていた画像ID
+let ceImgDirty = false;
 let pendingImg = '';
+let sending = false;
 let editingRoomId = null;
 let reMemberSel = [];
 let roomStop = false;
@@ -741,10 +811,10 @@ function roomMembers(room) {
 }
 
 function avatarInner(c) {
-  return c.img ? '<img src="' + c.img + '" alt="">' : esc(c.icon || c.name.slice(0, 1));
+  return c.img ? imgPlaceholder(c.img) : esc(c.icon || c.name.slice(0, 1));
 }
 function miniAv(c) {
-  const inner = c.img ? '<img src="' + c.img + '" alt="">' : esc(c.icon || c.name.slice(0, 1));
+  const inner = c.img ? imgPlaceholder(c.img) : esc(c.icon || c.name.slice(0, 1));
   return '<span class="mini-av" style="background:' + c.color + '2e">' + inner + '</span>';
 }
 
@@ -879,7 +949,12 @@ $('btnThink').addEventListener('click', () => {
   toast(who + 'の思考: ' + THINK_LABEL[next] + (next ? '' : '(全体設定は' + THINK_LABEL[eff] + ')'));
 });
 
+/* 描画本体は同期のまま。画像だけ後からhydrateImgs()が差し込む */
 function renderHeader() {
+  renderHeaderBody();
+  hydrateImgs($('hAvatar'));
+}
+function renderHeaderBody() {
   const room = activeRoom();
   renderRoomBar();
   renderThinkBtn();
@@ -917,6 +992,10 @@ function renderHeader() {
 }
 
 function renderChat() {
+  renderChatBody();
+  hydrateImgs($('chat'));
+}
+function renderChatBody() {
   const box = $('chat');
   const sess = activeSession();
   const room = isRoom(sess) ? sess : null;
@@ -943,7 +1022,7 @@ function renderChat() {
   }
   let html = '';
   sess.messages.forEach((m, i) => {
-    const imgHtml = m.img ? '<img class="chat-img" src="' + m.img + '" alt="">' : '';
+    const imgHtml = m.img ? imgPlaceholder(m.img, 'chat-img') : '';
     if (m.role === 'assistant') {
       const spk = (m.charId ? chars.find(x => x.id === m.charId) : null) || c || { name: '?', color: '#9a90a4' };
       let act = '';
@@ -1019,6 +1098,7 @@ function appendStreamBubble(spk) {
   wrap.innerHTML = '<div class="who" style="color:' + c.color + '">' + miniAv(c) + '<span>' + esc(c.name) + '</span></div>' +
     '<div class="bubble" style="border-left-color:' + c.color + '"><span class="txt"></span><span class="caret"></span></div>';
   $('chat').appendChild(wrap);
+  hydrateImgs(wrap);
   scrollBottom();
   const txt = wrap.querySelector('.txt');
   return {
@@ -1098,6 +1178,7 @@ function renderCharList() {
     openRoomEdit(null);
   });
   box.appendChild(addBtn);
+  hydrateImgs(box);
 }
 
 function selectRoom(id) {
@@ -1226,10 +1307,21 @@ function openCharEdit(id) {
   renderShopSeg();
   ceThinkSel = c ? (c.thinkMode || '') : '';
   renderCeThinkSeg();
-  ceImg = c ? (c.img || '') : '';
+  ceImgId = c ? (c.img || '') : '';
+  ceImg = '';
+  ceImgDirty = false;
   ceColorSel = c ? c.color : COLORS[Math.floor(Math.random() * COLORS.length)];
   renderSwatches();
   updateCePreview();
+  if (ceImgId) {
+    const want = ceImgId;
+    imgLoad(want).then(d => {
+      // 読み込み中に別キャラを開いた/画像を差し替えた場合は捨てる
+      if (ceImgId !== want || ceImgDirty) return;
+      ceImg = d;
+      updateCePreview();
+    }).catch(() => {});
+  }
   $('ceDelete').style.display = c ? 'block' : 'none';
   openScreen('scrCharEdit');
 }
@@ -1274,6 +1366,7 @@ $('ceImgFile').addEventListener('change', async (e) => {
   if (!f) return;
   try {
     ceImg = await shrinkImage(f, 144);
+    ceImgDirty = true;
     updateCePreview();
     toast('画像を設定した。保存を忘れずに');
   } catch (err) {
@@ -1281,7 +1374,7 @@ $('ceImgFile').addEventListener('change', async (e) => {
   }
   e.target.value = '';
 });
-$('ceImgDel').addEventListener('click', () => { ceImg = ''; updateCePreview(); });
+$('ceImgDel').addEventListener('click', () => { ceImg = ''; ceImgDirty = true; updateCePreview(); });
 $('ceIcon').addEventListener('input', updateCePreview);
 function renderApiSeg() {
   document.querySelectorAll('#ceApiSeg button').forEach(b => {
@@ -1358,9 +1451,21 @@ $('cePromptHist').addEventListener('click', () => {
   box.style.display = 'block';
 });
 
-$('ceSave').addEventListener('click', () => {
+$('ceSave').addEventListener('click', async () => {
   const name = $('ceName').value.trim();
   if (!name) { toast('名前は必須'); return; }
+  // 画像はここで初めてIndexedDBへ書く(編集を中断した場合は書かれない)
+  let imgRef = ceImgId;
+  if (ceImgDirty) {
+    try {
+      const nid = ceImg ? await imgSave(ceImg) : '';
+      if (ceImgId) await imgDelete(ceImgId);
+      imgRef = nid;
+    } catch (e) {
+      toast('画像の保存に失敗: ' + (e && e.message ? e.message : ''));
+      return;
+    }
+  }
   const data = {
     name: name,
     icon: $('ceIcon').value.trim(),
@@ -1376,7 +1481,7 @@ $('ceSave').addEventListener('click', () => {
     shopLevel: ceShopSel,
     thinkMode: ceThinkSel,
     memory: $('ceMemory').value.trim(),
-    img: ceImg
+    img: imgRef
   };
   if (editingCharId) {
     const old = chars.find(x => x.id === editingCharId);
@@ -1401,6 +1506,10 @@ $('ceDelete').addEventListener('click', () => {
   if (!editingCharId) return;
   const c = chars.find(x => x.id === editingCharId);
   if (!confirm(c.name + ' を削除する?セッションも全部消える。')) return;
+  // 消えるキャラ/セッションが抱えていた画像もIndexedDBから落とす
+  imgDelete(c.img);
+  sessions.filter(s => !isRoom(s) && s.charId === editingCharId)
+    .forEach(s => (s.messages || []).forEach(m => imgDelete(m.img)));
   chars = chars.filter(x => x.id !== editingCharId);
   sessions = sessions.filter(s => isRoom(s) || s.charId !== editingCharId);
   sessions.forEach(s => { if (isRoom(s)) s.charIds = s.charIds.filter(id => id !== editingCharId); });
@@ -1446,6 +1555,7 @@ function renderReMembers() {
     });
     box.appendChild(row);
   });
+  hydrateImgs(box);
 }
 $('reSave').addEventListener('click', () => {
   if (reMemberSel.length < 2) { toast('参加キャラを2人以上選んで'); return; }
@@ -1510,6 +1620,7 @@ function renderRoomBar() {
     chip.addEventListener('click', () => { if (!busy) roomRound(c); });
     bar.appendChild(chip);
   });
+  hydrateImgs(bar);
   bar.classList.add('show');
 }
 async function roomRound(only) {
@@ -1710,16 +1821,28 @@ $('btnSend').addEventListener('click', () => {
   sendMessage();
 });
 
-function sendMessage() {
+async function sendMessage() {
+  if (sending) return;
   const text = input.value.trim();
   if (!text && !pendingImg) return;
   const room = activeRoom();
   if (!room && !activeChar()) { toast('先にキャラを作って'); renderChat(); return; }
   if (!room && !currentKey()) { toast('設定でAPIキーを入れて'); openSettings(); return; }
+  // 添付画像はここで初めてIndexedDBへ書く。書き込み中の二重送信を止める
+  let imgRef = '';
+  if (pendingImg) {
+    sending = true;
+    try {
+      imgRef = await imgSave(pendingImg);
+    } catch (e) {
+      toast('画像の保存に失敗: ' + (e && e.message ? e.message : ''));
+      return;
+    } finally { sending = false; }
+  }
   let sess = activeSession();
   if (!sess) sess = newSession(active.charId);
   const m = { role: 'user', content: text, time: Date.now() };
-  if (pendingImg) m.img = pendingImg;
+  if (imgRef) m.img = imgRef;
   sess.messages.push(m);
   sess.updated = Date.now();
   saveSessions();
@@ -1762,7 +1885,7 @@ async function generateFor(spk, prevAlts) {
     saveSessions();
   };
   try {
-    const hist = room ? buildRoomHistory(sess, c) : buildHistory(sess);
+    const hist = await resolveHistImgs(room ? buildRoomHistory(sess, c) : buildHistory(sess));
     await callAPI(hist, (d) => {
       acc += d;
       bubble.update(acc);
@@ -1967,6 +2090,23 @@ function buildRoomHistory(sess, me) {
   }
   return msgs;
 }
+/* buildHistory/buildRoomHistoryはトークン数の概算にも同期で使うため、
+   o.imgs にはIDを入れたままにしておき、API送信の直前でここで実データに解決する。
+   ここを通さないとLLMに "img_xxxx" という文字列が渡り、
+   エラーも出ないまま画像だけが見えていない状態になる。 */
+async function resolveHistImgs(msgs) {
+  for (const o of msgs) {
+    if (!o.imgs) continue;
+    const out = [];
+    for (const v of o.imgs) {
+      let d = '';
+      try { d = await imgLoad(v); } catch (e) { d = ''; }
+      if (d) out.push(d);
+    }
+    if (out.length) o.imgs = out; else delete o.imgs;
+  }
+  return msgs.filter(m => (m.content && m.content.trim()) || (m.imgs && m.imgs.length));
+}
 function normalizeForAnthropic(messages) {
   const out = [];
   for (const m of messages) {
@@ -2155,10 +2295,24 @@ async function oneShot(promptText, maxTok) {
 }
 
 /* ---------------- backup ---------------- */
-$('btnExport').addEventListener('click', () => {
+$('btnExport').addEventListener('click', async () => {
   const d = new Date();
   const stamp = d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
-  const data = { app: 'tsumugi', ver: 1, exported: d.toISOString(), chars, sessions, active, settings, todos, memos, shop, shopHist };
+  // 画像はIndexedDBにあるので、実データを引いてJSONに埋め込む(従来形式のまま保つ)
+  let charsOut, sessionsOut;
+  try {
+    charsOut = await Promise.all(chars.map(async c =>
+      c.img ? Object.assign({}, c, { img: await imgLoad(c.img) }) : c));
+    sessionsOut = await Promise.all(sessions.map(async s =>
+      Object.assign({}, s, {
+        messages: await Promise.all((s.messages || []).map(async m =>
+          m.img ? Object.assign({}, m, { img: await imgLoad(m.img) }) : m))
+      })));
+  } catch (e) {
+    toast('エクスポート失敗: 画像の読み出しでエラー');
+    return;
+  }
+  const data = { app: 'tsumugi', ver: 1, exported: d.toISOString(), chars: charsOut, sessions: sessionsOut, active, settings, todos, memos, shop, shopHist };
   const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -2173,11 +2327,21 @@ $('impFile').addEventListener('change', (e) => {
   e.target.value = '';
   if (!f) return;
   const r = new FileReader();
-  r.onload = () => {
+  r.onload = async () => {
     try {
       const d = JSON.parse(r.result);
       if (d.app !== 'tsumugi' || !Array.isArray(d.chars) || !Array.isArray(d.sessions)) throw new Error('紡のバックアップファイルではない');
       if (!confirm('現在のデータを全て上書きして復元する?(この操作は戻せない。心配なら先にエクスポートを)')) return;
+      // JSON内の画像はBase64。IndexedDBへ入れてIDに差し替えてから保存する
+      for (const c of d.chars) {
+        if (isImgData(c.img)) c.img = await imgSave(c.img);
+      }
+      for (const s of d.sessions) {
+        for (const m of (s.messages || [])) {
+          if (isImgData(m.img)) m.img = await imgSave(m.img);
+        }
+      }
+      LS.set('tsu_migrated_v1', true);
       LS.set('tsu_chars', d.chars);
       LS.set('tsu_sessions', d.sessions);
       if (d.active) LS.set('tsu_active', d.active);
@@ -2953,7 +3117,31 @@ if (window.visualViewport) {
   window.visualViewport.addEventListener('resize', () => setTimeout(scrollBottom, 60));
 }
 
-(function init() {
+/* 0-4: 既存データの移行。localStorage内のBase64画像をIndexedDBへ移し、IDに置換する。
+   完了フラグで二重実行を防ぐ。失敗した場合はフラグを立てず、次回起動でやり直す。 */
+async function migrateImages() {
+  if (LS.get('tsu_migrated_v1', false)) return;
+  let n = 0;
+  for (const c of chars) {
+    if (isImgData(c.img)) { c.img = await imgSave(c.img); n++; }
+  }
+  for (const s of sessions) {
+    for (const m of (s.messages || [])) {
+      if (isImgData(m.img)) { m.img = await imgSave(m.img); n++; }
+    }
+  }
+  if (n) { saveChars(); saveSessions(); }
+  LS.set('tsu_migrated_v1', true);
+  if (n) toast('画像' + n + '件をIndexedDBへ移した');
+}
+
+(async function init() {
+  try {
+    await migrateImages();
+  } catch (e) {
+    // 移行できなくても元のBase64はlocalStorageに残っているので表示は続く
+    toast('画像の移行に失敗。データはそのまま残っている');
+  }
   if (active.charId && !chars.find(c => c.id === active.charId)) active.charId = null;
   if (active.sessionId && !sessions.find(s => s.id === active.sessionId)) active.sessionId = null;
   const s0 = sessions.find(s => s.id === active.sessionId);
