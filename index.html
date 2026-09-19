@@ -427,6 +427,10 @@ input[type=range]{padding:0; height:32px; accent-color:var(--amber); background:
     <label>最初の挨拶(任意)</label>
     <textarea id="ceGreeting" rows="4" placeholder="セッション開始時にキャラが最初に発する言葉"></textarea>
     <label>使用API(このキャラ専用)</label>
+    <label style="margin-top:0">登録モデルを使う</label>
+    <select id="ceModelSel"></select>
+    <p class="hint">「(全体設定に従う)」以外を選ぶと、このキャラだけそのモデルで話す。下の個別設定より優先される。</p>
+    <label>プロバイダの上書き</label>
     <div class="seg" id="ceApiSeg">
       <button data-v="">デフォルト</button>
       <button data-v="anthropic">Anthropic</button>
@@ -517,12 +521,89 @@ input[type=range]{padding:0; height:32px; accent-color:var(--amber); background:
 </div>
 
 <!-- ===== settings ===== -->
+<!-- ===== システムプロンプトのプリセット ===== -->
+<div class="screen" id="scrPrompts">
+  <header class="bar">
+    <button class="icon-btn back"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>
+    <div class="title">シスプロのプリセット</div>
+    <button class="icon-btn" id="btnAddPrompt"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+  </header>
+  <div class="body">
+    <div id="promptListWrap">
+      <p class="hint" id="promptCount" style="margin-top:0"></p>
+      <div id="promptList"></div>
+    </div>
+    <div id="promptEdit" style="display:none">
+      <label>タイトル</label>
+      <input id="peTitle" placeholder="例: 日常の相棒" autocomplete="off">
+      <label>本文</label>
+      <textarea id="peBody" rows="12" placeholder="ここにシステムプロンプトを書く"></textarea>
+      <button class="btn primary" id="peSave" style="margin-top:14px">保存</button>
+      <button class="btn ghost" id="peCancel" style="margin-top:8px">やめる</button>
+      <button class="btn ghost" id="peDelete" style="margin-top:8px;color:var(--danger)">このプリセットを削除</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== モデル登録 ===== -->
+<div class="screen" id="scrModels">
+  <header class="bar">
+    <button class="icon-btn back"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>
+    <div class="title">モデル登録</div>
+    <button class="icon-btn" id="btnAddModel"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+  </header>
+  <div class="body">
+    <div id="modelListWrap">
+      <p class="hint" style="margin-top:0">接続先とモデル名の組を登録しておくと、設定画面から一手で切り替えられる。</p>
+      <div id="modelList"></div>
+    </div>
+    <div id="modelEdit" style="display:none">
+      <label>表示名</label>
+      <input id="meLabel" placeholder="例: OpenRouter / Claude" autocomplete="off">
+      <label>接続方式</label>
+      <div class="seg" id="meKindSeg">
+        <button data-v="openai">OpenAI互換</button>
+        <button data-v="anthropic">Anthropic</button>
+      </div>
+      <div id="meBaseRow">
+        <label>よく使う接続先</label>
+        <div class="seg" id="mePreset">
+          <button type="button" data-u="https://openrouter.ai/api/v1">OpenRouter</button>
+          <button type="button" data-u="https://generativelanguage.googleapis.com/v1beta/openai">Google</button>
+          <button type="button" data-u="https://api.openai.com/v1">OpenAI</button>
+        </div>
+        <label>ベースURL</label>
+        <input id="meBase" placeholder="https://openrouter.ai/api/v1" autocomplete="off">
+      </div>
+      <label>モデル名</label>
+      <input id="meModel" placeholder="例: anthropic/claude-sonnet-4" autocomplete="off">
+      <label>APIキー</label>
+      <div class="key-row">
+        <input id="meKey" type="password" placeholder="このモデルで使うキー" autocomplete="off">
+        <button id="meKeyShow" type="button">表示</button>
+      </div>
+      <label>使用するシスプロ</label>
+      <select id="mePrompt"></select>
+      <p class="hint">紐づけておくと、このモデルを選んだときにキャラのシスプロの代わりに使われる。</p>
+      <button class="btn primary" id="meSave" style="margin-top:14px">保存</button>
+      <button class="btn ghost" id="meCancel" style="margin-top:8px">やめる</button>
+      <button class="btn ghost" id="meDelete" style="margin-top:8px;color:var(--danger)">この登録を削除</button>
+    </div>
+  </div>
+</div>
+
 <div class="screen" id="scrSettings">
   <header class="bar">
     <button class="icon-btn back"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>
     <div class="title">設定</div>
   </header>
   <div class="body">
+    <label>使用モデル</label>
+    <select id="setActiveModel"></select>
+    <p class="hint">登録済みモデルから選ぶ。シスプロを紐づけてあれば、切り替えと同時にシスプロも入れ替わる。「(登録を使わない)」なら下のプロバイダ設定がそのまま使われる。</p>
+    <button class="btn ghost" id="btnModels" style="margin:10px 0 8px">モデルを登録・編集</button>
+    <button class="btn ghost" id="btnPrompts" style="margin:0 0 20px">シスプロのプリセット</button>
+
     <label>プロバイダ</label>
     <div class="seg">
       <button id="segAnth">Anthropic</button>
@@ -779,7 +860,8 @@ const DEF_SETTINGS = {
   anthropic: { apiKey: '', model: 'claude-sonnet-4-20250514' },
   openai: { apiKey: '', baseUrl: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
   temperature: 0.9, maxTokens: 1024, historyLimit: 0,
-  thinking: '', thinkBudget: 2048
+  thinking: '', thinkBudget: 2048,
+  activeModelId: ''
 };
 
 let settings = loadSettings();
@@ -797,6 +879,16 @@ let shop = LS.get('tsu_shop', []);
 const saveShop = () => LS.set('tsu_shop', shop);
 let shopHist = LS.get('tsu_shopHist', []);
 const saveShopHist = () => LS.set('tsu_shopHist', shopHist);
+
+/* シスプロのプリセット(最大5枠)と、接続先×モデル名の登録 */
+const MAX_PROMPTS = 5;
+let prompts = LS.get('tsu_prompts', []);
+const savePrompts = () => LS.set('tsu_prompts', prompts);
+let models = LS.get('tsu_models', []);
+const saveModels = () => LS.set('tsu_models', models);
+let editingPromptId = null;
+let editingModelId = null;
+let meKindSel = 'openai';
 
 let busy = false;
 let abortCtl = null;
@@ -1331,6 +1423,8 @@ function openCharEdit(id) {
   renderShopSeg();
   ceThinkSel = c ? (c.thinkMode || '') : '';
   renderCeThinkSeg();
+  $('ceModelSel').innerHTML = modelOptions('(全体設定に従う)');
+  $('ceModelSel').value = c ? (c.modelId || '') : '';
   ceImgId = c ? (c.img || '') : '';
   ceImg = '';
   ceImgDirty = false;
@@ -1505,6 +1599,7 @@ $('ceSave').addEventListener('click', async () => {
     shopLevel: ceShopSel,
     thinkMode: ceThinkSel,
     memory: $('ceMemory').value.trim(),
+    modelId: $('ceModelSel').value || '',
     img: imgRef
   };
   if (editingCharId) {
@@ -1708,7 +1803,8 @@ $('sideBg').addEventListener('click', () => closeScreen('scrSessions'));
   }, { passive: true });
 })();
 document.querySelectorAll('.screen .back').forEach(b => {
-  b.addEventListener('click', () => b.closest('.screen').classList.remove('open'));
+  // closeScreenを通さないと、サイドバーを閉じたときに暗幕が残る
+  b.addEventListener('click', () => closeScreen(b.closest('.screen').id));
 });
 $('charChip').addEventListener('click', () => { renderCharList(); openScreen('scrChars'); });
 $('btnAddChar').addEventListener('click', () => openCharEdit(null));
@@ -1985,8 +2081,28 @@ async function generateFor(spk, prevAlts) {
 }
 
 /* ---------------- API ---------------- */
+const findModel = (id) => id ? (models.find(m => m.id === id) || null) : null;
+/* どの登録モデルを使うか。キャラが指定していればそれが最優先。
+   キャラが旧来の個別プロバイダ設定を持っている場合は、
+   全体で選んだ登録モデルに引きずられないようにする。 */
+function resolveModelFor(c) {
+  return findModel(c && c.modelId) || ((c && c.apiProvider) ? null : findModel(settings.activeModelId));
+}
 function resolveApi(cArg) {
   const c = cArg || activeChar();
+  const think = (c && c.thinkMode) || settings.thinking || '';
+  const mdl = resolveModelFor(c);
+  if (mdl) {
+    const p = mdl.kind === 'anthropic' ? 'anthropic' : 'openai';
+    return {
+      prov: p,
+      model: (c && c.apiModel) || mdl.model,
+      apiKey: (c && c.apiKey) || mdl.apiKey,
+      baseUrl: p === 'anthropic' ? null : ((c && c.baseUrl) || mdl.baseUrl),
+      think: think,
+      promptId: mdl.promptId || ''
+    };
+  }
   const prov = (c && c.apiProvider) || settings.provider;
   const glob = prov === 'anthropic' ? settings.anthropic.model : settings.openai.model;
   const model = (c && c.apiModel) || glob;
@@ -1998,8 +2114,7 @@ function resolveApi(cArg) {
     apiKey = (c && c.apiKey) || settings.openai.apiKey;
     baseUrl = (c && c.baseUrl) || settings.openai.baseUrl;
   }
-  const think = (c && c.thinkMode) || settings.thinking || '';
-  return { prov, model, apiKey, baseUrl, think };
+  return { prov, model, apiKey, baseUrl, think, promptId: '' };
 }
 /* 思考deltaを<think>…</think>で包んで既存の折りたたみUIに流し込む小さな状態機械 */
 function thinkWrapper(onDelta) {
@@ -2086,7 +2201,12 @@ function buildSystem(cArg, room) {
   const wday = ['日','月','火','水','木','金','土'][jst.getDay()];
   const dateStr = jst.getFullYear() + '年' + (jst.getMonth()+1) + '月' + jst.getDate() + '日(' + wday + ') '
     + String(jst.getHours()).padStart(2,'0') + ':' + String(jst.getMinutes()).padStart(2,'0');
-  let s = '現在: ' + dateStr + '\n\n' + (c.prompt || '');
+  // 使うモデルにシスプロのプリセットが紐づいていれば、キャラのプロンプトの代わりにそれを使う
+  const pre = (() => {
+    const id = resolveApi(c).promptId;
+    return id ? (prompts.find(p => p.id === id) || null) : null;
+  })();
+  let s = '現在: ' + dateStr + '\n\n' + (pre ? (pre.body || '') : (c.prompt || ''));
   if (c.memory) s += '\n\n# 記憶(過去のセッションからの経緯)\n' + c.memory;
   s += buildTodoBlock(c.todoLevel || 'none');
   s += buildMemoBlock(c.memoLevel || 'off');
@@ -2363,6 +2483,192 @@ async function oneShot(promptText, maxTok) {
 }
 
 /* ---------------- backup ---------------- */
+/* ---------------- シスプロのプリセット ---------------- */
+function renderPromptList() {
+  const box = $('promptList');
+  $('promptCount').textContent = prompts.length + ' / ' + MAX_PROMPTS + ' 枠';
+  box.innerHTML = '';
+  if (!prompts.length) {
+    box.innerHTML = '<div class="hint" style="text-align:center;padding:30px 0">まだプリセットがない。右上の＋から作れる。</div>';
+    return;
+  }
+  prompts.forEach(p => {
+    const row = document.createElement('div');
+    row.className = 'list-item';
+    const used = models.filter(m => m.promptId === p.id).length;
+    row.innerHTML =
+      '<div class="grow"><div class="li-title">' + esc(p.title || '(無題)') + '</div>' +
+      '<div class="li-sub">' + (used ? used + '件のモデルが使用中' : '未使用') + '</div>' +
+      '<div class="li-prev">' + esc((p.body || '').replace(/\s+/g, ' ').slice(0, 60)) + '</div></div>';
+    row.addEventListener('click', () => openPromptEdit(p.id));
+    box.appendChild(row);
+  });
+}
+function openPromptEdit(id) {
+  const p = id ? prompts.find(x => x.id === id) : null;
+  editingPromptId = p ? p.id : null;
+  $('peTitle').value = p ? (p.title || '') : '';
+  $('peBody').value = p ? (p.body || '') : '';
+  $('peDelete').style.display = p ? 'block' : 'none';
+  $('promptListWrap').style.display = 'none';
+  $('promptEdit').style.display = 'block';
+}
+function closePromptEdit() {
+  $('promptEdit').style.display = 'none';
+  $('promptListWrap').style.display = 'block';
+  renderPromptList();
+}
+$('btnPrompts').addEventListener('click', () => { closePromptEdit(); openScreen('scrPrompts'); });
+$('btnAddPrompt').addEventListener('click', () => {
+  if (prompts.length >= MAX_PROMPTS) { toast('プリセットは' + MAX_PROMPTS + '枠まで'); return; }
+  openPromptEdit(null);
+});
+$('peCancel').addEventListener('click', closePromptEdit);
+$('peSave').addEventListener('click', () => {
+  const title = $('peTitle').value.trim();
+  if (!title) { toast('タイトルは必須'); return; }
+  const body = $('peBody').value;
+  if (editingPromptId) {
+    const p = prompts.find(x => x.id === editingPromptId);
+    p.title = title; p.body = body;
+  } else {
+    if (prompts.length >= MAX_PROMPTS) { toast('プリセットは' + MAX_PROMPTS + '枠まで'); return; }
+    prompts.push({ id: uid(), title: title, body: body });
+  }
+  savePrompts();
+  closePromptEdit();
+  toast('保存した');
+});
+$('peDelete').addEventListener('click', () => {
+  if (!editingPromptId) return;
+  if (!confirm('このプリセットを削除する?')) return;
+  prompts = prompts.filter(x => x.id !== editingPromptId);
+  models.forEach(m => { if (m.promptId === editingPromptId) m.promptId = ''; });
+  savePrompts(); saveModels();
+  closePromptEdit();
+  toast('削除した');
+});
+
+/* ---------------- モデル登録(接続先×モデル名) ---------------- */
+function renderMeKindSeg() {
+  document.querySelectorAll('#meKindSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === meKindSel));
+  $('meBaseRow').style.display = meKindSel === 'anthropic' ? 'none' : '';
+}
+function fillPromptSelect(sel, cur) {
+  sel.innerHTML = '<option value="">(キャラのシスプロを使う)</option>' +
+    prompts.map(p => '<option value="' + p.id + '">' + esc(p.title || '(無題)') + '</option>').join('');
+  sel.value = cur || '';
+}
+function renderModelList() {
+  const box = $('modelList');
+  box.innerHTML = '';
+  if (!models.length) {
+    box.innerHTML = '<div class="hint" style="text-align:center;padding:30px 0">まだ登録がない。右上の＋から追加できる。</div>';
+    return;
+  }
+  models.forEach(m => {
+    const row = document.createElement('div');
+    row.className = 'list-item';
+    const cur = m.id === settings.activeModelId;
+    const pre = m.promptId ? prompts.find(p => p.id === m.promptId) : null;
+    row.innerHTML =
+      '<div class="grow"><div class="li-title">' + (cur ? '▸ ' : '') + esc(m.label || '(無題)') + '</div>' +
+      '<div class="li-sub">' + esc(m.model || '(モデル名なし)') + '</div>' +
+      '<div class="li-prev">' + esc(m.kind === 'anthropic' ? 'Anthropic' : (m.baseUrl || 'OpenAI互換')) +
+      (pre ? ' · シスプロ: ' + esc(pre.title || '') : '') + '</div></div>';
+    row.addEventListener('click', () => openModelEdit(m.id));
+    box.appendChild(row);
+  });
+}
+function openModelEdit(id) {
+  const m = id ? models.find(x => x.id === id) : null;
+  editingModelId = m ? m.id : null;
+  $('meLabel').value = m ? (m.label || '') : '';
+  meKindSel = m ? (m.kind || 'openai') : 'openai';
+  renderMeKindSeg();
+  $('meBase').value = m ? (m.baseUrl || '') : '';
+  $('meModel').value = m ? (m.model || '') : '';
+  $('meKey').value = m ? (m.apiKey || '') : '';
+  fillPromptSelect($('mePrompt'), m ? m.promptId : '');
+  $('meDelete').style.display = m ? 'block' : 'none';
+  $('modelListWrap').style.display = 'none';
+  $('modelEdit').style.display = 'block';
+}
+function closeModelEdit() {
+  $('modelEdit').style.display = 'none';
+  $('modelListWrap').style.display = 'block';
+  renderModelList();
+}
+$('btnModels').addEventListener('click', () => { closeModelEdit(); openScreen('scrModels'); });
+$('btnAddModel').addEventListener('click', () => openModelEdit(null));
+$('meCancel').addEventListener('click', closeModelEdit);
+document.querySelectorAll('#meKindSeg button').forEach(b => {
+  b.addEventListener('click', () => { meKindSel = b.dataset.v; renderMeKindSeg(); });
+});
+document.querySelectorAll('#mePreset button').forEach(b => {
+  b.addEventListener('click', () => { $('meBase').value = b.dataset.u; });
+});
+$('meKeyShow').addEventListener('click', () => {
+  const inp = $('meKey');
+  const isPass = inp.type === 'password';
+  inp.type = isPass ? 'text' : 'password';
+  $('meKeyShow').textContent = isPass ? '隠す' : '表示';
+});
+$('meSave').addEventListener('click', () => {
+  const label = $('meLabel').value.trim();
+  const model = $('meModel').value.trim();
+  if (!label) { toast('表示名は必須'); return; }
+  if (!model) { toast('モデル名は必須'); return; }
+  const base = $('meBase').value.trim();
+  if (meKindSel !== 'anthropic' && !base) { toast('ベースURLを入れて'); return; }
+  const data = {
+    label: label,
+    kind: meKindSel,
+    baseUrl: meKindSel === 'anthropic' ? '' : base.replace(/\/+$/, ''),
+    model: model,
+    apiKey: $('meKey').value.trim(),
+    promptId: $('mePrompt').value || ''
+  };
+  if (editingModelId) Object.assign(models.find(x => x.id === editingModelId), data);
+  else models.push(Object.assign({ id: uid() }, data));
+  saveModels();
+  closeModelEdit();
+  renderActiveModelSel();
+  renderHeader();
+  toast('保存した');
+});
+$('meDelete').addEventListener('click', () => {
+  if (!editingModelId) return;
+  if (!confirm('この登録を削除する?')) return;
+  models = models.filter(x => x.id !== editingModelId);
+  if (settings.activeModelId === editingModelId) { settings.activeModelId = ''; saveSettings(); }
+  chars.forEach(c => { if (c.modelId === editingModelId) c.modelId = ''; });
+  saveModels(); saveChars();
+  closeModelEdit();
+  renderActiveModelSel();
+  renderHeader();
+  toast('削除した');
+});
+
+/* 設定画面の「使用モデル」。切り替えると紐づいたシスプロも一緒に変わる */
+function modelOptions(placeholder) {
+  return '<option value="">' + placeholder + '</option>' +
+    models.map(m => '<option value="' + m.id + '">' + esc(m.label || '(無題)') + '</option>').join('');
+}
+function renderActiveModelSel() {
+  const sel = $('setActiveModel');
+  sel.innerHTML = modelOptions('(登録を使わない)');
+  sel.value = settings.activeModelId || '';
+}
+$('setActiveModel').addEventListener('change', () => {
+  settings.activeModelId = $('setActiveModel').value || '';
+  saveSettings();
+  renderHeader();
+  const m = findModel(settings.activeModelId);
+  const pre = m && m.promptId ? prompts.find(p => p.id === m.promptId) : null;
+  toast(m ? (m.label + 'に切り替えた' + (pre ? '(シスプロ: ' + pre.title + ')' : '')) : '登録モデルの使用をやめた');
+});
+
 $('btnExport').addEventListener('click', async () => {
   const d = new Date();
   const stamp = d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
@@ -2380,7 +2686,7 @@ $('btnExport').addEventListener('click', async () => {
     toast('エクスポート失敗: 画像の読み出しでエラー');
     return;
   }
-  const data = { app: 'tsumugi', ver: 1, exported: d.toISOString(), chars: charsOut, sessions: sessionsOut, active, settings, todos, memos, shop, shopHist };
+  const data = { app: 'tsumugi', ver: 1, exported: d.toISOString(), chars: charsOut, sessions: sessionsOut, active, settings, todos, memos, shop, shopHist, prompts, models };
   const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -2418,6 +2724,8 @@ $('impFile').addEventListener('change', (e) => {
       if (Array.isArray(d.memos)) LS.set('tsu_memos', d.memos);
       if (Array.isArray(d.shop)) LS.set('tsu_shop', d.shop);
       if (Array.isArray(d.shopHist)) LS.set('tsu_shopHist', d.shopHist);
+      if (Array.isArray(d.prompts)) LS.set('tsu_prompts', d.prompts);
+      if (Array.isArray(d.models)) LS.set('tsu_models', d.models);
       toast('復元した。再読み込みする');
       setTimeout(() => location.reload(), 600);
     } catch (err) {
@@ -2768,6 +3076,7 @@ function openSettings() {
   $('setHist').value = settings.historyLimit;
   $('setThinkBudget').value = settings.thinkBudget || 2048;
   renderSetThinkSeg();
+  renderActiveModelSel();
   segRender();
   openScreen('scrSettings');
 }
