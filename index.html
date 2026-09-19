@@ -194,6 +194,25 @@ footer.composer{
 .screen .title{font-family:var(--mincho); font-size:17px; font-weight:700; flex:1;}
 .screen .body{flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch;
   padding:16px; padding-bottom:calc(24px + env(safe-area-inset-bottom));}
+
+/* --- セッション一覧は左からのサイドバー。スマホでも画面幅を食わないオーバーレイ --- */
+#scrSessions{
+  right:auto; width:min(86vw, 360px); max-width:360px;
+  transform:translateX(-103%);
+  border-right:1px solid var(--line);
+  box-shadow:2px 0 24px rgba(0,0,0,.35);
+  z-index:22;
+}
+#scrSessions.open{transform:none;}
+#sideBg{
+  position:fixed; inset:0; z-index:21; background:rgba(0,0,0,.45);
+  opacity:0; pointer-events:none; transition:opacity .24s ease;
+}
+#sideBg.show{opacity:1; pointer-events:auto;}
+.li-prev{
+  font-size:12px; color:var(--muted); margin-top:3px;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
 label{display:block; font-size:12px; color:var(--muted); margin:16px 0 6px;}
 label:first-child{margin-top:0;}
 .hint{font-size:12px; color:var(--muted); line-height:1.6; margin-top:6px;}
@@ -483,6 +502,7 @@ input[type=range]{padding:0; height:32px; accent-color:var(--amber); background:
 </div>
 
 <!-- ===== sessions ===== -->
+<div id="sideBg"></div>
 <div class="screen" id="scrSessions">
   <header class="bar">
     <button class="icon-btn back"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>
@@ -1204,9 +1224,12 @@ function renderSessList() {
     const row = document.createElement('div');
     row.className = 'list-item';
     const cur = s.id === active.sessionId;
+    const lastMsg = s.messages[s.messages.length - 1];
+    const prev = lastMsg ? stripThink(lastMsg.content).replace(/\s+/g, ' ').trim().slice(0, 60) : '';
     row.innerHTML =
       '<div class="grow"><div class="li-title">' + (cur ? '▸ ' : '') + esc(sessionTitle(s)) + '</div>' +
-      '<div class="li-sub">' + timeStr(s.updated) + ' · ' + s.messages.length + '発言</div></div>' +
+      '<div class="li-sub">' + timeStr(s.updated) + ' · ' + s.messages.length + '発言</div>' +
+      (prev ? '<div class="li-prev">' + esc(prev) + '</div>' : '') + '</div>' +
       '<button class="li-act del"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg></button>';
     row.querySelector('.grow').addEventListener('click', () => {
       active.sessionId = s.id;
@@ -1216,6 +1239,7 @@ function renderSessList() {
     row.querySelector('.del').addEventListener('click', (e) => {
       e.stopPropagation();
       if (!confirm('このセッションを削除する?')) return;
+      (s.messages || []).forEach(m => imgDelete(m.img));  // 抱えていた画像もIDBから落とす
       sessions = sessions.filter(x => x.id !== s.id);
       if (active.sessionId === s.id) {
         if (isRoom(s)) {
@@ -1637,14 +1661,58 @@ async function roomRound(only) {
 }
 
 /* ---------------- screens / sheet ---------------- */
-function openScreen(id) { $(id).classList.add('open'); }
-function closeScreen(id) { $(id).classList.remove('open'); }
+/* scrSessionsだけはサイドバー扱い。背景の暗幕もここで面倒を見るので、
+   呼び出し側は今まで通りopenScreen/closeScreenを使えばいい。 */
+function openScreen(id) {
+  $(id).classList.add('open');
+  if (id === 'scrSessions') $('sideBg').classList.add('show');
+}
+function closeScreen(id) {
+  $(id).classList.remove('open');
+  if (id === 'scrSessions') $('sideBg').classList.remove('show');
+}
+const sideOpen = () => $('scrSessions').classList.contains('open');
+function openSide() {
+  $('sessSearch').value = '';
+  renderSessList();
+  openScreen('scrSessions');
+}
+$('sideBg').addEventListener('click', () => closeScreen('scrSessions'));
+
+/* 右スワイプで開き、左スワイプで閉じる。
+   iOSのSafariは画面左端からの右スワイプがブラウザバックに割り当てられているので、
+   端から始まったスワイプはOSに譲る。縦スクロールと取り合わないよう、
+   横移動が縦移動を明確に上回った時だけ反応させる。 */
+(() => {
+  const EDGE = 32, TH = 60;
+  let sx = 0, sy = 0, live = false;
+  const blocked = () =>
+    $('sheet').classList.contains('open') ||
+    Array.from(document.querySelectorAll('.screen.open')).some(el => el.id !== 'scrSessions');
+
+  document.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 1 || blocked()) { live = false; return; }
+    const t = e.touches[0];
+    if (!sideOpen() && t.clientX < EDGE) { live = false; return; }
+    sx = t.clientX; sy = t.clientY; live = true;
+  }, { passive: true });
+
+  document.addEventListener('touchend', (e) => {
+    if (!live) return;
+    live = false;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - sx, dy = t.clientY - sy;
+    if (Math.abs(dx) < TH || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+    if (dx > 0 && !sideOpen()) openSide();
+    else if (dx < 0 && sideOpen()) closeScreen('scrSessions');
+  }, { passive: true });
+})();
 document.querySelectorAll('.screen .back').forEach(b => {
   b.addEventListener('click', () => b.closest('.screen').classList.remove('open'));
 });
 $('charChip').addEventListener('click', () => { renderCharList(); openScreen('scrChars'); });
 $('btnAddChar').addEventListener('click', () => openCharEdit(null));
-$('btnSessions').addEventListener('click', () => { $('sessSearch').value = ''; renderSessList(); openScreen('scrSessions'); });
+$('btnSessions').addEventListener('click', openSide);
 $('sessSearch').addEventListener('input', renderSessList);
 $('btnAddSess').addEventListener('click', () => {
   if (activeRoom()) { toast('ルームは1つの継続会話。履歴を消すならルーム編集から'); return; }
