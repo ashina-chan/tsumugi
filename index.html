@@ -40,7 +40,7 @@ textarea{resize:none; line-height:1.6;}
 
 /* ---------- top bar ---------- */
 header.bar{
-  display:flex; align-items:center; gap:6px; flex-wrap:wrap;
+  display:flex; align-items:center; gap:6px;
   padding:10px 10px; padding-top:calc(10px + env(safe-area-inset-top));
   background:var(--panel); border-bottom:1px solid var(--line);
   flex-shrink:0;
@@ -59,14 +59,10 @@ header.bar{
 }
 .mini-av img{width:100%; height:100%; object-fit:cover; display:block;}
 .chip-meta{min-width:0;}
-/* 1行目=キャラ名、2行目=モデル名のボタン。
-   モデル名に1行まるごと使わせて、途中で切れないようにする。 */
 .chip-name{font-family:var(--mincho); font-size:16px; font-weight:700;
   white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
-/* order で必ずアイコン列より後ろに回し、幅100%で独立した2行目にする */
 .chip-sub{font-size:11px; color:var(--muted);
-  display:flex; align-items:center; min-width:0;
-  width:100%; order:10; margin-top:1px; padding-left:48px;}
+  display:flex; align-items:center; min-width:0; margin-top:2px;}
 /* モデル名は押せるボタンにする。キャラ名側のタップ(キャラ切替)と
    触る場所をはっきり分けるため、枠で囲って▾を付ける。 */
 .model-chip{
@@ -364,10 +360,9 @@ input[type=range]{padding:0; height:32px; accent-color:var(--amber); background:
     <div class="avatar" id="hAvatar">紡</div>
     <div class="chip-meta">
       <div class="chip-name" id="hName">紡 -tsumugi-</div>
+      <div class="chip-sub" id="hSub">キャラを選んでください</div>
     </div>
   </div>
-  <!-- モデル名はヘッダーを折り返した2行目に置く。アイコンに幅を削られず横いっぱい使える -->
-  <div class="chip-sub" id="hSub">キャラを選んでください</div>
   <button class="icon-btn" id="btnNewSess" aria-label="新しいセッション">
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
   </button>
@@ -1104,6 +1099,20 @@ $('btnThink').addEventListener('click', () => {
 });
 
 /* 描画本体は同期のまま。画像だけ後からhydrateImgs()が差し込む */
+/* ヘッダーは横幅が厳しいので短く見せる。提供元の接頭辞("google/"など)と、
+   末尾の -latest や -preview、日付のような修飾を落とす。
+   フルの名前はモデル選択のリストで見られるので、ここでは短いほうがいい。 */
+function shortModelName(m) {
+  if (!m) return '';
+  let s = String(m).split('/').pop(), prev;
+  do {
+    prev = s;
+    s = s.replace(/-(latest|preview|exp)$/i, '')
+         .replace(/-\d{8}$/, '')
+         .replace(/-\d{4}-\d{2}-\d{2}$/, '');
+  } while (s !== prev);
+  return s || String(m);
+}
 function renderHeader() {
   renderHeaderBody();
   hydrateImgs($('hAvatar'));
@@ -1126,13 +1135,12 @@ function renderHeaderBody() {
   if (c) {
     $('hAvatar').innerHTML = avatarInner(c);
     $('hAvatar').style.background = c.color + '2e';
-    const p = resolveApi().model;
     $('hName').textContent = c.name;
     $('hName').style.color = c.color;
-    // 2行目はモデル名のボタン。キャラ名のタップ(キャラ切替)と役割を分ける
+    // モデル名はボタンにして、キャラ名のタップ(キャラ切替)と役割を分ける
     $('hSub').innerHTML =
       '<button class="model-chip" id="hModel"><span class="nm">' +
-      esc(p || 'モデル未設定') + '</span></button>';
+      esc(shortModelName(resolveApi().model) || 'モデル未設定') + '</span></button>';
   } else {
     $('hAvatar').innerHTML = '紡';
     $('hAvatar').style.background = 'rgba(227,161,79,.18)';
