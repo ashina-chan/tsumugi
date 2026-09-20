@@ -292,6 +292,18 @@ input[type=range]{padding:0; height:32px; accent-color:var(--amber); background:
 .ep-body label:first-child{margin-top:0;}
 /* アイコン付きのボタン(キャラ一覧の下のグローバル設定など) */
 .btn.btn-ico{display:flex; align-items:center; justify-content:center; gap:8px;}
+/* シスプロのタブ。選んでいないタブは沈ませて、本文欄と地続きに見せる */
+.ptabs{display:flex; gap:5px; flex-wrap:wrap; margin-top:2px;}
+.ptab{
+  display:inline-flex; align-items:center; gap:6px;
+  font-size:12.5px; color:var(--muted);
+  background:rgba(255,255,255,.04); border:1px solid var(--line); border-bottom:none;
+  border-radius:10px 10px 0 0; padding:7px 12px;
+}
+.ptab .t{max-width:96px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.ptab.on{color:var(--text); background:var(--field); border-color:var(--amber);}
+.ptab .ed{opacity:.7; flex-shrink:0; display:grid; place-items:center;}
+.ptabs + textarea{border-top-left-radius:0; border-top-right-radius:0;}
 
 /* ---------- image attach ---------- */
 #attachBar{display:none; align-items:center; gap:10px; padding:8px 12px;
@@ -429,6 +441,7 @@ input[type=range]{padding:0; height:32px; accent-color:var(--amber); background:
       </div>
     </div>
     <label>システムプロンプト<button class="mini-link" id="cePromptHist" type="button">過去の版</button></label>
+    <div class="ptabs" id="cePromptTabs"></div>
     <textarea id="cePrompt" rows="9" placeholder="キャラ設定・世界観・口調などをここに。骨格だけ書いて余白を残すのが君の流儀でしょ"></textarea>
     <div id="cePromptHistBox" style="display:none"></div>
     <label>最初の挨拶(任意)</label>
@@ -814,6 +827,33 @@ endpoints.length = EP_SLOTS;
 
 let epOpen = -1;    // 展開中の枠。-1なら全部畳んでいる
 
+/* キャラはシステムプロンプトを3タブ持つ。promptIdx が今使っているタブ。
+   旧データ(単一のc.prompt)は1枚目のタブへ移す。 */
+const PROMPT_TABS = 3;
+(() => {
+  let moved = false;
+  chars.forEach(c => {
+    if (!Array.isArray(c.prompts)) {
+      c.prompts = [{ title: 'タブ1', body: c.prompt || '' }];
+      moved = true;
+    }
+    while (c.prompts.length < PROMPT_TABS) {
+      c.prompts.push({ title: 'タブ' + (c.prompts.length + 1), body: '' });
+    }
+    c.prompts.length = PROMPT_TABS;
+    const i = c.promptIdx | 0;
+    c.promptIdx = (i >= 0 && i < PROMPT_TABS) ? i : 0;
+  });
+  // saveChars() はこの下で定義されるのでまだ呼べない。LSを直接使う
+  if (moved) LS.set('tsu_chars', chars);
+})();
+/* 今そのキャラが使っているシスプロ */
+function activePrompt(c) {
+  if (!c) return '';
+  const p = Array.isArray(c.prompts) ? c.prompts[c.promptIdx | 0] : null;
+  return p ? (p.body || '') : (c.prompt || '');
+}
+
 let busy = false;
 let abortCtl = null;
 let editIdx = null;
@@ -828,6 +868,8 @@ let ceTodoSel = 'none';
 let ceMemoSel = 'off';
 let ceShopSel = 'off';
 let ceThinkSel = '';
+let cePrompts = [];    // 編集中のシスプロ3タブ
+let cePromptIdx = 0;
 let ceImg = '';        // 編集中の下書き(Base64)。保存確定時にだけIndexedDBへ書く
 let ceImgId = '';      // 編集対象キャラが元々持っていた画像ID
 let ceImgDirty = false;
@@ -1361,7 +1403,16 @@ function openCharEdit(id) {
   $('ceTitle').textContent = c ? c.name + ' を編集' : '新しいキャラ';
   $('ceName').value = c ? c.name : '';
   $('ceIcon').value = c ? (c.icon || '') : '';
-  $('cePrompt').value = c ? c.prompt : '';
+  cePrompts = (c && Array.isArray(c.prompts))
+    ? c.prompts.map(p => ({ title: p.title, body: p.body }))
+    : [{ title: 'タブ1', body: c ? (c.prompt || '') : '' }];
+  while (cePrompts.length < PROMPT_TABS) {
+    cePrompts.push({ title: 'タブ' + (cePrompts.length + 1), body: '' });
+  }
+  cePrompts.length = PROMPT_TABS;
+  cePromptIdx = (c && (c.promptIdx | 0) < PROMPT_TABS) ? Math.max(0, c.promptIdx | 0) : 0;
+  $('cePrompt').value = cePrompts[cePromptIdx].body || '';
+  renderPromptTabs();
   $('ceGreeting').value = c ? (c.greeting || '') : '';
   $('ceModel').value = c ? (c.apiModel || '') : '';
   $('ceApiKey').value = c ? (c.apiKey || '') : '';
@@ -1395,6 +1446,38 @@ function openCharEdit(id) {
   }
   $('ceDelete').style.display = c ? 'block' : 'none';
   openScreen('scrCharEdit');
+}
+/* シスプロのタブ。選んでいるタブの本文が下のtextareaに出る。
+   タブを移るときは表示中の内容を退避してから入れ替える。 */
+function renderPromptTabs() {
+  const box = $('cePromptTabs');
+  box.innerHTML = '';
+  cePrompts.forEach((p, i) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'ptab' + (i === cePromptIdx ? ' on' : '');
+    b.innerHTML = '<span class="t"></span>' + (i === cePromptIdx
+      ? '<span class="ed"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5l4 4L7 21H3v-4L16.5 3.5z"/></svg></span>'
+      : '');
+    b.querySelector('.t').textContent = p.title || ('タブ' + (i + 1));
+    b.addEventListener('click', (e) => {
+      if (i === cePromptIdx) {
+        // 選択中のタブをもう一度押した時だけ名前を変えられる
+        if (!e.target.closest('.ed')) return;
+        const v = prompt('このタブの名前', p.title || ('タブ' + (i + 1)));
+        if (v === null) return;
+        p.title = v.trim() || ('タブ' + (i + 1));
+        renderPromptTabs();
+        return;
+      }
+      cePrompts[cePromptIdx].body = $('cePrompt').value;
+      cePromptIdx = i;
+      $('cePrompt').value = cePrompts[i].body || '';
+      $('cePromptHistBox').style.display = 'none';
+      renderPromptTabs();
+    });
+    box.appendChild(b);
+  });
 }
 function renderSwatches() {
   const box = $('ceSwatches');
@@ -1537,11 +1620,17 @@ $('ceSave').addEventListener('click', async () => {
       return;
     }
   }
+  // 表示中のタブの内容を取り込んでから保存する
+  cePrompts[cePromptIdx].body = $('cePrompt').value;
+  const tabs = cePrompts.map(p => ({ title: p.title, body: (p.body || '').trim() }));
   const data = {
     name: name,
     icon: $('ceIcon').value.trim(),
     color: ceColorSel,
-    prompt: $('cePrompt').value.trim(),
+    prompts: tabs,
+    promptIdx: cePromptIdx,
+    // 履歴やエクスポートなど既存の仕組みのために、使用中のタブの内容を写しておく
+    prompt: tabs[cePromptIdx].body,
     greeting: $('ceGreeting').value.trim(),
     apiProvider: ceApiSel,
     apiModel: $('ceModel').value.trim(),
@@ -1556,9 +1645,13 @@ $('ceSave').addEventListener('click', async () => {
   };
   if (editingCharId) {
     const old = chars.find(x => x.id === editingCharId);
-    if ((old.prompt || '') !== data.prompt) {
+    // 履歴は同じタブ同士で比べる。タブを移っただけで旧版が積まれないように
+    const oldBody = (old.prompts && old.prompts[cePromptIdx])
+      ? (old.prompts[cePromptIdx].body || '')
+      : (old.prompt || '');
+    if (oldBody !== data.prompt) {
       old.promptHist = old.promptHist || [];
-      old.promptHist.push({ t: Date.now(), p: old.prompt || '' });
+      old.promptHist.push({ t: Date.now(), p: oldBody });
       if (old.promptHist.length > 20) old.promptHist = old.promptHist.slice(-20);
     }
     Object.assign(old, data);
@@ -2146,7 +2239,7 @@ function buildSystem(cArg, room) {
   const wday = ['日','月','火','水','木','金','土'][jst.getDay()];
   const dateStr = jst.getFullYear() + '年' + (jst.getMonth()+1) + '月' + jst.getDate() + '日(' + wday + ') '
     + String(jst.getHours()).padStart(2,'0') + ':' + String(jst.getMinutes()).padStart(2,'0');
-  let s = '現在: ' + dateStr + '\n\n' + (c.prompt || '');
+  let s = '現在: ' + dateStr + '\n\n' + activePrompt(c);
   if (c.memory) s += '\n\n# 記憶(過去のセッションからの経緯)\n' + c.memory;
   s += buildTodoBlock(c.todoLevel || 'none');
   s += buildMemoBlock(c.memoLevel || 'off');
