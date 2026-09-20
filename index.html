@@ -40,7 +40,7 @@ textarea{resize:none; line-height:1.6;}
 
 /* ---------- top bar ---------- */
 header.bar{
-  display:flex; align-items:center; gap:6px;
+  display:flex; align-items:center; gap:6px; flex-wrap:wrap;
   padding:10px 10px; padding-top:calc(10px + env(safe-area-inset-top));
   background:var(--panel); border-bottom:1px solid var(--line);
   flex-shrink:0;
@@ -59,11 +59,17 @@ header.bar{
 }
 .mini-av img{width:100%; height:100%; object-fit:cover; display:block;}
 .chip-meta{min-width:0;}
+/* 1行目=キャラ名と発言数、2行目=モデル名のボタン。
+   モデル名に1行まるごと使わせて、途中で切れないようにする。 */
 .chip-name{font-family:var(--mincho); font-size:16px; font-weight:700;
-  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  display:flex; align-items:baseline; gap:8px; min-width:0; white-space:nowrap;}
+.chip-name .nm{overflow:hidden; text-overflow:ellipsis; flex-shrink:0; max-width:100%;}
+.chip-name .meta{font-family:var(--gothic); font-size:11px; font-weight:400; color:var(--muted);
+  flex:1 1 0; min-width:0; overflow:hidden; text-overflow:ellipsis;}
+/* order で必ずアイコン列より後ろに回し、幅100%で独立した2行目にする */
 .chip-sub{font-size:11px; color:var(--muted);
-  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
-  display:flex; align-items:center; gap:6px;}
+  display:flex; align-items:center; min-width:0;
+  width:100%; order:10; margin-top:1px; padding-left:48px;}
 /* モデル名は押せるボタンにする。キャラ名側のタップ(キャラ切替)と
    触る場所をはっきり分けるため、枠で囲って▾を付ける。 */
 .model-chip{
@@ -76,9 +82,8 @@ header.bar{
 .model-chip .nm{overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
 .model-chip::after{content:'▾'; flex-shrink:0; opacity:.85;}
 .model-chip:active{color:var(--text); background:rgba(255,255,255,.07); border-color:var(--amber);}
-/* 狭いときに譲るのは発言数のほう。モデル名が先に潰れると何を使っているか分からなくなる */
-.chip-sub .rest{flex:1 1 0; min-width:0; overflow:hidden; text-overflow:ellipsis;}
-@media (max-width:460px){ .chip-sub .rest{display:none;} }
+.chip-sub .rest{margin-left:8px; flex:1 1 0; min-width:0;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
 .icon-btn{
   width:38px; height:38px; border-radius:10px; display:grid; place-items:center;
   color:var(--muted); flex-shrink:0;
@@ -364,9 +369,10 @@ input[type=range]{padding:0; height:32px; accent-color:var(--amber); background:
     <div class="avatar" id="hAvatar">紡</div>
     <div class="chip-meta">
       <div class="chip-name" id="hName">紡 -tsumugi-</div>
-      <div class="chip-sub" id="hSub">キャラを選んでください</div>
     </div>
   </div>
+  <!-- モデル名はヘッダーを折り返した2行目に置く。アイコンに幅を削られず横いっぱい使える -->
+  <div class="chip-sub" id="hSub">キャラを選んでください</div>
   <button class="icon-btn" id="btnNewSess" aria-label="新しいセッション">
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
   </button>
@@ -1125,22 +1131,24 @@ function renderHeaderBody() {
   if (c) {
     $('hAvatar').innerHTML = avatarInner(c);
     $('hAvatar').style.background = c.color + '2e';
-    $('hName').textContent = c.name;
-    $('hName').style.color = c.color;
     const p = resolveApi().model;
     const sess = activeSession();
-    let rest = sess ? '· ' + Math.floor(sess.messages.length) + '発言' : '';
+    // 1行目はキャラ名と発言数。長い送信字数は2行目に逃がして名前を切らせない
+    const meta = sess ? '· ' + Math.floor(sess.messages.length) + '発言' : '';
+    let sent = '';
     if (sess && sess.messages.length) {
       const n = buildSystem().length + buildHistory(sess).reduce((a, m) => a + m.content.length, 0);
-      rest += ' · 送信~' + (n >= 1000 ? (n / 1000).toFixed(1) + 'k' : n) + '字';
+      sent = '送信~' + (n >= 1000 ? (n / 1000).toFixed(1) + 'k' : n) + '字';
     }
-    // モデル名だけボタンにして、キャラ名のタップと役割を分ける。
-    // ヘッダーは幅が厳しいので "google/" のような提供元の接頭辞は落として名前本体を見せる
-    const shortName = p ? String(p).split('/').pop() : '';
+    $('hName').innerHTML =
+      '<span class="nm">' + esc(c.name) + '</span>' +
+      (meta ? '<span class="meta">' + esc(meta) + '</span>' : '');
+    $('hName').style.color = c.color;
+    // 2行目はモデル名のボタン。キャラ名のタップ(キャラ切替)と役割を分ける
     $('hSub').innerHTML =
       '<button class="model-chip" id="hModel"><span class="nm">' +
-      esc(shortName || 'モデル未設定') + '</span></button>' +
-      (rest ? '<span class="rest">' + esc(rest) + '</span>' : '');
+      esc(p || 'モデル未設定') + '</span></button>' +
+      (sent ? '<span class="rest">' + esc(sent) + '</span>' : '');
   } else {
     $('hAvatar').innerHTML = '紡';
     $('hAvatar').style.background = 'rgba(227,161,79,.18)';
