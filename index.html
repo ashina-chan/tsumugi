@@ -205,9 +205,6 @@ footer.composer{
   opacity:0; pointer-events:none; transition:opacity .24s ease;
 }
 #sideBg.show{opacity:1; pointer-events:auto;}
-/* この2画面は設定画面から開くので、設定画面より上に重ねる
-   (同じz-indexだとDOM順で後ろのscrSettingsが上に来てしまう) */
-#scrPrompts, #scrModels{z-index:24;}
 .li-prev{
   font-size:12px; color:var(--muted); margin-top:3px;
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
@@ -281,6 +278,20 @@ input[type=range]{padding:0; height:32px; accent-color:var(--amber); background:
 .key-row{display:flex; gap:8px;}
 .key-row input{flex:1;}
 .key-row button{flex-shrink:0; padding:0 14px; border:1px solid var(--line); border-radius:12px; color:var(--muted); font-size:13px;}
+/* 接続先の登録枠。▽で開いて△で畳む */
+.ep{border:1px solid var(--line); border-radius:12px; margin-bottom:8px; overflow:hidden;}
+.ep.open{border-color:var(--amber);}
+.ep-head{display:flex; align-items:center; gap:6px; padding:11px 12px; cursor:pointer;}
+.ep-name{flex:1; min-width:0; font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.ep-ico{color:var(--muted); padding:4px 6px; flex-shrink:0; display:grid; place-items:center;}
+.ep-ico:active{color:var(--text);}
+.ep-tog::after{content:'▽'; font-size:13px;}
+.ep.open .ep-tog::after{content:'△';}
+.ep-body{display:none; padding:0 12px 12px;}
+.ep.open .ep-body{display:block;}
+.ep-body label:first-child{margin-top:0;}
+/* アイコン付きのボタン(キャラ一覧の下のグローバル設定など) */
+.btn.btn-ico{display:flex; align-items:center; justify-content:center; gap:8px;}
 
 /* ---------- image attach ---------- */
 #attachBar{display:none; align-items:center; gap:10px; padding:8px 12px;
@@ -423,9 +434,6 @@ input[type=range]{padding:0; height:32px; accent-color:var(--amber); background:
     <label>最初の挨拶(任意)</label>
     <textarea id="ceGreeting" rows="4" placeholder="セッション開始時にキャラが最初に発する言葉"></textarea>
     <label>使用API(このキャラ専用)</label>
-    <label style="margin-top:0">登録モデルを使う</label>
-    <select id="ceModelSel"></select>
-    <p class="hint">「(全体設定に従う)」以外を選ぶと、このキャラだけそのモデルで話す。下の個別設定より優先される。</p>
     <label>プロバイダの上書き</label>
     <div class="seg" id="ceApiSeg">
       <button data-v="">デフォルト</button>
@@ -517,118 +525,19 @@ input[type=range]{padding:0; height:32px; accent-color:var(--amber); background:
 </div>
 
 <!-- ===== settings ===== -->
-<!-- ===== システムプロンプトのプリセット ===== -->
-<div class="screen" id="scrPrompts">
-  <header class="bar">
-    <button class="icon-btn back"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>
-    <div class="title">シスプロのプリセット</div>
-    <button class="icon-btn" id="btnAddPrompt"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
-  </header>
-  <div class="body">
-    <div id="promptListWrap">
-      <p class="hint" id="promptCount" style="margin-top:0"></p>
-      <div id="promptList"></div>
-    </div>
-    <div id="promptEdit" style="display:none">
-      <label>タイトル</label>
-      <input id="peTitle" placeholder="例: 日常の相棒" autocomplete="off">
-      <label>本文</label>
-      <textarea id="peBody" rows="12" placeholder="ここにシステムプロンプトを書く"></textarea>
-      <button class="btn primary" id="peSave" style="margin-top:14px">保存</button>
-      <button class="btn ghost" id="peCancel" style="margin-top:8px">やめる</button>
-      <button class="btn ghost" id="peDelete" style="margin-top:8px;color:var(--danger)">このプリセットを削除</button>
-    </div>
-  </div>
-</div>
-
-<!-- ===== モデル登録 ===== -->
-<div class="screen" id="scrModels">
-  <header class="bar">
-    <button class="icon-btn back"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>
-    <div class="title">モデル登録</div>
-    <button class="icon-btn" id="btnAddModel"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
-  </header>
-  <div class="body">
-    <div id="modelListWrap">
-      <p class="hint" style="margin-top:0">接続先とモデル名の組を登録しておくと、設定画面から一手で切り替えられる。</p>
-      <div id="modelList"></div>
-    </div>
-    <div id="modelEdit" style="display:none">
-      <label>表示名</label>
-      <input id="meLabel" placeholder="例: OpenRouter / Claude" autocomplete="off">
-      <label>接続方式</label>
-      <div class="seg" id="meKindSeg">
-        <button data-v="openai">OpenAI互換</button>
-        <button data-v="anthropic">Anthropic</button>
-      </div>
-      <div id="meBaseRow">
-        <label>よく使う接続先</label>
-        <div class="seg" id="mePreset">
-          <button type="button" data-u="https://openrouter.ai/api/v1">OpenRouter</button>
-          <button type="button" data-u="https://generativelanguage.googleapis.com/v1beta/openai">Google</button>
-          <button type="button" data-u="https://api.openai.com/v1">OpenAI</button>
-        </div>
-        <label>ベースURL</label>
-        <input id="meBase" placeholder="https://openrouter.ai/api/v1" autocomplete="off">
-      </div>
-      <label>モデル名</label>
-      <input id="meModel" placeholder="例: anthropic/claude-sonnet-4" autocomplete="off">
-      <label>APIキー</label>
-      <div class="key-row">
-        <input id="meKey" type="password" placeholder="この接続先で使うキー" autocomplete="off">
-        <button id="meKeyShow" type="button">表示</button>
-      </div>
-      <p class="hint">キーは接続先ごとに覚える。同じURLのモデルを追加するときは自動で入るので、貼り直さなくていい。ここで書き換えると、その接続先の登録すべてに反映される。</p>
-      <label>使用するシスプロ</label>
-      <select id="mePrompt"></select>
-      <p class="hint">紐づけておくと、このモデルを選んだときにキャラのシスプロの代わりに使われる。</p>
-      <button class="btn primary" id="meSave" style="margin-top:14px">保存</button>
-      <button class="btn ghost" id="meCancel" style="margin-top:8px">やめる</button>
-      <button class="btn ghost" id="meDelete" style="margin-top:8px;color:var(--danger)">この登録を削除</button>
-    </div>
-  </div>
-</div>
-
 <div class="screen" id="scrSettings">
   <header class="bar">
     <button class="icon-btn back"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>
     <div class="title">設定</div>
   </header>
   <div class="body">
-    <label>使用モデル</label>
-    <select id="setActiveModel"></select>
-    <p class="hint">登録済みモデルから選ぶ。シスプロを紐づけてあれば、切り替えと同時にシスプロも入れ替わる。「(登録を使わない)」なら下のプロバイダ設定がそのまま使われる。</p>
-    <button class="btn ghost" id="btnModels" style="margin:10px 0 8px">モデルを登録・編集</button>
-    <button class="btn ghost" id="btnPrompts" style="margin:0 0 20px">シスプロのプリセット</button>
+    <label>接続先</label>
+    <div id="epList"></div>
+    <p class="hint">ベースURLとAPIキーの組。キャラのモデル設定からここの登録を選んで使う。URLが api.anthropic.com ならAnthropic形式、それ以外はOpenAI互換として送る。</p>
 
-    <label>プロバイダ</label>
-    <div class="seg">
-      <button id="segAnth">Anthropic</button>
-      <button id="segOai">OpenAI互換</button>
-    </div>
-
-    <div id="grpAnth">
-      <label>APIキー</label>
-      <div class="key-row">
-        <input id="anthKey" type="password" placeholder="sk-ant-..." autocomplete="off">
-        <button id="anthKeyShow">表示</button>
-      </div>
-      <label>モデル名</label>
-      <input id="anthModel" placeholder="claude-sonnet-4-20250514" autocomplete="off">
-    </div>
-
-    <div id="grpOai" style="display:none">
-      <label>ベースURL</label>
-      <input id="oaiBase" placeholder="https://api.openai.com/v1" autocomplete="off">
-      <p class="hint">OpenRouterなら https://openrouter.ai/api/v1 のように、OpenAI互換APIならどこでも可。</p>
-      <label>APIキー</label>
-      <div class="key-row">
-        <input id="oaiKey" type="password" placeholder="sk-..." autocomplete="off">
-        <button id="oaiKeyShow">表示</button>
-      </div>
-      <label>モデル名</label>
-      <input id="oaiModel" placeholder="gpt-4o-mini" autocomplete="off">
-    </div>
+    <label>モデル名（仮）</label>
+    <input id="tmpModel" placeholder="例: google/gemini-2.5-flash" autocomplete="off">
+    <p class="hint">キャラごとのモデル設定ができるまでの仮置き。今はここの名前が全キャラ共通で使われる。</p>
 
     <label>温度 (temperature)</label>
     <div class="row">
@@ -877,32 +786,33 @@ const saveShop = () => LS.set('tsu_shop', shop);
 let shopHist = LS.get('tsu_shopHist', []);
 const saveShopHist = () => LS.set('tsu_shopHist', shopHist);
 
-/* シスプロのプリセット(最大5枠)と、接続先×モデル名の登録 */
-const MAX_PROMPTS = 5;
-let prompts = LS.get('tsu_prompts', []);
-const savePrompts = () => LS.set('tsu_prompts', prompts);
-let models = LS.get('tsu_models', []);
-const saveModels = () => LS.set('tsu_models', models);
+/* 接続先(エンドポイント)の登録。枠は常に4つで、空のまま置いておける。
+   1枠 = 名前 + ベースURL + APIキー。モデル名はキャラ側が持つ。 */
+const EP_SLOTS = 4;
+let endpoints = LS.get('tsu_endpoints', null);
+const saveEndpoints = () => LS.set('tsu_endpoints', endpoints);
+/* URLで送信形式を見分ける。Anthropicだけ形が違うので、そこだけ拾えばいい */
+const isAnthropicUrl = (u) => /(^|\/\/|\.)api\.anthropic\.com(\/|$)/i.test(String(u || ''));
 
-/* APIキーは接続先(エンドポイント)ごとに1つ持つ。
-   同じURLのモデルをいくつ登録してもキーを貼り直さなくていいようにするため。 */
-let apiKeys = LS.get('tsu_keys', {});
-const saveApiKeys = () => LS.set('tsu_keys', apiKeys);
-const keyOf = (kind, baseUrl) =>
-  kind === 'anthropic' ? 'anthropic' : ('openai|' + String(baseUrl || '').replace(/\/+$/, ''));
-/* 旧形式(モデルごとにキーを持っていた頃)の登録を接続先ごとのキーへ寄せる */
-(() => {
-  let moved = false;
-  models.forEach(m => {
-    const k = keyOf(m.kind, m.baseUrl);
-    if (m.apiKey && !apiKeys[k]) { apiKeys[k] = m.apiKey; moved = true; }
-  });
-  if (moved) saveApiKeys();
-})();
-let editingPromptId = null;
-let editingModelId = null;
-let meKindSel = 'openai';
-let meKeyAuto = '';
+if (!Array.isArray(endpoints)) {
+  // 旧設定(プロバイダごとのURLとキー)から枠を作る
+  endpoints = [];
+  const o = settings.openai || {};
+  if (o.apiKey || o.baseUrl) {
+    endpoints.push({ name: '登録1', baseUrl: o.baseUrl || '', apiKey: o.apiKey || '' });
+  }
+  const a = settings.anthropic || {};
+  if (a.apiKey) {
+    endpoints.push({ name: 'Anthropic', baseUrl: 'https://api.anthropic.com', apiKey: a.apiKey });
+  }
+  saveEndpoints();
+}
+while (endpoints.length < EP_SLOTS) {
+  endpoints.push({ name: '登録' + (endpoints.length + 1), baseUrl: '', apiKey: '' });
+}
+endpoints.length = EP_SLOTS;
+
+let epOpen = -1;    // 展開中の枠。-1なら全部畳んでいる
 
 let busy = false;
 let abortCtl = null;
@@ -1281,9 +1191,17 @@ function renderCharList() {
       '<div class="avatar" style="background:' + c.color + '2e">' + avatarInner(c) + '</div>' +
       '<div class="grow"><div class="li-title mincho" style="color:' + c.color + '">' + esc(c.name) + '</div>' +
       '<div class="li-sub">' + n + 'セッション</div></div>' +
-      '<button class="li-act ed"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5l4 4L7 21H3v-4L16.5 3.5z"/></svg></button>';
+      '<button class="li-act th" aria-label="このキャラのセッション一覧"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg></button>' +
+      '<button class="li-act ed" aria-label="編集"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5l4 4L7 21H3v-4L16.5 3.5z"/></svg></button>';
     row.querySelector('.grow').addEventListener('click', () => { selectChar(c.id); closeScreen('scrChars'); });
     row.querySelector('.avatar').addEventListener('click', () => { selectChar(c.id); closeScreen('scrChars'); });
+    // ≡ はそのキャラに切り替えてセッション一覧を開く
+    row.querySelector('.th').addEventListener('click', (e) => {
+      e.stopPropagation();
+      selectChar(c.id);
+      closeScreen('scrChars');
+      openSide();
+    });
     row.querySelector('.ed').addEventListener('click', (e) => { e.stopPropagation(); openCharEdit(c.id); });
     box.appendChild(row);
   });
@@ -1314,6 +1232,19 @@ function renderCharList() {
     openRoomEdit(null);
   });
   box.appendChild(addBtn);
+
+  // グローバル設定への入口。右上の隅ではなくここに置く(片手で届く位置)
+  const setBtn = document.createElement('button');
+  setBtn.className = 'btn ghost btn-ico';
+  setBtn.style.marginTop = '20px';
+  setBtn.innerHTML =
+    '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+    '<circle cx="12" cy="12" r="3.2"/>' +
+    '<path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"/>' +
+    '</svg><span>グローバル設定</span>';
+  setBtn.addEventListener('click', openSettings);
+  box.appendChild(setBtn);
+
   hydrateImgs(box);
 }
 
@@ -1447,8 +1378,6 @@ function openCharEdit(id) {
   renderShopSeg();
   ceThinkSel = c ? (c.thinkMode || '') : '';
   renderCeThinkSeg();
-  $('ceModelSel').innerHTML = modelOptions('(全体設定に従う)');
-  $('ceModelSel').value = c ? (c.modelId || '') : '';
   ceImgId = c ? (c.img || '') : '';
   ceImg = '';
   ceImgDirty = false;
@@ -1623,7 +1552,6 @@ $('ceSave').addEventListener('click', async () => {
     shopLevel: ceShopSel,
     thinkMode: ceThinkSel,
     memory: $('ceMemory').value.trim(),
-    modelId: $('ceModelSel').value || '',
     img: imgRef
   };
   if (editingCharId) {
@@ -2113,41 +2041,25 @@ async function generateFor(spk, prevAlts) {
 }
 
 /* ---------------- API ---------------- */
-const findModel = (id) => id ? (models.find(m => m.id === id) || null) : null;
-/* どの登録モデルを使うか。キャラが指定していればそれが最優先。
-   キャラが旧来の個別プロバイダ設定を持っている場合は、
-   全体で選んだ登録モデルに引きずられないようにする。 */
-function resolveModelFor(c) {
-  return findModel(c && c.modelId) || ((c && c.apiProvider) ? null : findModel(settings.activeModelId));
+/* どの接続先を使うか。キャラごとのモデル設定を入れるまでの暫定で、
+   キャラ個別の上書きがあればそれ、無ければ最初に埋まっている枠を使う。 */
+function activeEndpoint(c) {
+  if (c && (c.baseUrl || c.apiKey)) {
+    return { baseUrl: c.baseUrl || '', apiKey: c.apiKey || '' };
+  }
+  return endpoints.find(e => e.baseUrl || e.apiKey) || { baseUrl: '', apiKey: '' };
 }
 function resolveApi(cArg) {
   const c = cArg || activeChar();
-  const think = (c && c.thinkMode) || settings.thinking || '';
-  const mdl = resolveModelFor(c);
-  if (mdl) {
-    const p = mdl.kind === 'anthropic' ? 'anthropic' : 'openai';
-    const shared = apiKeys[keyOf(mdl.kind, mdl.baseUrl)] || '';
-    return {
-      prov: p,
-      model: (c && c.apiModel) || mdl.model,
-      apiKey: (c && c.apiKey) || shared || mdl.apiKey,
-      baseUrl: p === 'anthropic' ? null : ((c && c.baseUrl) || mdl.baseUrl),
-      think: think,
-      promptId: mdl.promptId || ''
-    };
-  }
-  const prov = (c && c.apiProvider) || settings.provider;
-  const glob = prov === 'anthropic' ? settings.anthropic.model : settings.openai.model;
-  const model = (c && c.apiModel) || glob;
-  let apiKey, baseUrl;
-  if (prov === 'anthropic') {
-    apiKey = (c && c.apiKey) || settings.anthropic.apiKey;
-    baseUrl = null;
-  } else {
-    apiKey = (c && c.apiKey) || settings.openai.apiKey;
-    baseUrl = (c && c.baseUrl) || settings.openai.baseUrl;
-  }
-  return { prov, model, apiKey, baseUrl, think, promptId: '' };
+  const ep = activeEndpoint(c);
+  const anth = isAnthropicUrl(ep.baseUrl);
+  return {
+    prov: anth ? 'anthropic' : 'openai',
+    model: (c && c.apiModel) || settings.openai.model || '',
+    apiKey: ep.apiKey,
+    baseUrl: anth ? null : ep.baseUrl,
+    think: (c && c.thinkMode) || settings.thinking || ''
+  };
 }
 /* 思考deltaを<think>…</think>で包んで既存の折りたたみUIに流し込む小さな状態機械 */
 function thinkWrapper(onDelta) {
@@ -2234,12 +2146,7 @@ function buildSystem(cArg, room) {
   const wday = ['日','月','火','水','木','金','土'][jst.getDay()];
   const dateStr = jst.getFullYear() + '年' + (jst.getMonth()+1) + '月' + jst.getDate() + '日(' + wday + ') '
     + String(jst.getHours()).padStart(2,'0') + ':' + String(jst.getMinutes()).padStart(2,'0');
-  // 使うモデルにシスプロのプリセットが紐づいていれば、キャラのプロンプトの代わりにそれを使う
-  const pre = (() => {
-    const id = resolveApi(c).promptId;
-    return id ? (prompts.find(p => p.id === id) || null) : null;
-  })();
-  let s = '現在: ' + dateStr + '\n\n' + (pre ? (pre.body || '') : (c.prompt || ''));
+  let s = '現在: ' + dateStr + '\n\n' + (c.prompt || '');
   if (c.memory) s += '\n\n# 記憶(過去のセッションからの経緯)\n' + c.memory;
   s += buildTodoBlock(c.todoLevel || 'none');
   s += buildMemoBlock(c.memoLevel || 'off');
@@ -2515,210 +2422,6 @@ async function oneShot(promptText, maxTok) {
   }
 }
 
-/* ---------------- シスプロのプリセット ---------------- */
-function renderPromptList() {
-  const box = $('promptList');
-  $('promptCount').textContent = prompts.length + ' / ' + MAX_PROMPTS + ' 枠';
-  box.innerHTML = '';
-  if (!prompts.length) {
-    box.innerHTML = '<div class="hint" style="text-align:center;padding:30px 0">まだプリセットがない。右上の＋から作れる。</div>';
-    return;
-  }
-  prompts.forEach(p => {
-    const row = document.createElement('div');
-    row.className = 'list-item';
-    const used = models.filter(m => m.promptId === p.id).length;
-    row.innerHTML =
-      '<div class="grow"><div class="li-title">' + esc(p.title || '(無題)') + '</div>' +
-      '<div class="li-sub">' + (used ? used + '件のモデルが使用中' : '未使用') + '</div>' +
-      '<div class="li-prev">' + esc((p.body || '').replace(/\s+/g, ' ').slice(0, 60)) + '</div></div>';
-    row.addEventListener('click', () => openPromptEdit(p.id));
-    box.appendChild(row);
-  });
-}
-function openPromptEdit(id) {
-  const p = id ? prompts.find(x => x.id === id) : null;
-  editingPromptId = p ? p.id : null;
-  $('peTitle').value = p ? (p.title || '') : '';
-  $('peBody').value = p ? (p.body || '') : '';
-  $('peDelete').style.display = p ? 'block' : 'none';
-  $('promptListWrap').style.display = 'none';
-  $('promptEdit').style.display = 'block';
-}
-function closePromptEdit() {
-  $('promptEdit').style.display = 'none';
-  $('promptListWrap').style.display = 'block';
-  renderPromptList();
-}
-$('btnPrompts').addEventListener('click', () => { closePromptEdit(); openScreen('scrPrompts'); });
-$('btnAddPrompt').addEventListener('click', () => {
-  if (prompts.length >= MAX_PROMPTS) { toast('プリセットは' + MAX_PROMPTS + '枠まで'); return; }
-  openPromptEdit(null);
-});
-$('peCancel').addEventListener('click', closePromptEdit);
-$('peSave').addEventListener('click', () => {
-  const title = $('peTitle').value.trim();
-  if (!title) { toast('タイトルは必須'); return; }
-  const body = $('peBody').value;
-  if (editingPromptId) {
-    const p = prompts.find(x => x.id === editingPromptId);
-    p.title = title; p.body = body;
-  } else {
-    if (prompts.length >= MAX_PROMPTS) { toast('プリセットは' + MAX_PROMPTS + '枠まで'); return; }
-    prompts.push({ id: uid(), title: title, body: body });
-  }
-  savePrompts();
-  closePromptEdit();
-  toast('保存した');
-});
-$('peDelete').addEventListener('click', () => {
-  if (!editingPromptId) return;
-  if (!confirm('このプリセットを削除する?')) return;
-  prompts = prompts.filter(x => x.id !== editingPromptId);
-  models.forEach(m => { if (m.promptId === editingPromptId) m.promptId = ''; });
-  savePrompts(); saveModels();
-  closePromptEdit();
-  toast('削除した');
-});
-
-/* ---------------- モデル登録(接続先×モデル名) ---------------- */
-function renderMeKindSeg() {
-  document.querySelectorAll('#meKindSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === meKindSel));
-  $('meBaseRow').style.display = meKindSel === 'anthropic' ? 'none' : '';
-}
-function fillPromptSelect(sel, cur) {
-  sel.innerHTML = '<option value="">(キャラのシスプロを使う)</option>' +
-    prompts.map(p => '<option value="' + p.id + '">' + esc(p.title || '(無題)') + '</option>').join('');
-  sel.value = cur || '';
-}
-function renderModelList() {
-  const box = $('modelList');
-  box.innerHTML = '';
-  if (!models.length) {
-    box.innerHTML = '<div class="hint" style="text-align:center;padding:30px 0">まだ登録がない。右上の＋から追加できる。</div>';
-    return;
-  }
-  models.forEach(m => {
-    const row = document.createElement('div');
-    row.className = 'list-item';
-    const cur = m.id === settings.activeModelId;
-    const pre = m.promptId ? prompts.find(p => p.id === m.promptId) : null;
-    row.innerHTML =
-      '<div class="grow"><div class="li-title">' + (cur ? '▸ ' : '') + esc(m.label || '(無題)') + '</div>' +
-      '<div class="li-sub">' + esc(m.model || '(モデル名なし)') + '</div>' +
-      '<div class="li-prev">' + esc(m.kind === 'anthropic' ? 'Anthropic' : (m.baseUrl || 'OpenAI互換')) +
-      (pre ? ' · シスプロ: ' + esc(pre.title || '') : '') + '</div></div>';
-    row.addEventListener('click', () => openModelEdit(m.id));
-    box.appendChild(row);
-  });
-}
-function openModelEdit(id) {
-  const m = id ? models.find(x => x.id === id) : null;
-  editingModelId = m ? m.id : null;
-  $('meLabel').value = m ? (m.label || '') : '';
-  meKindSel = m ? (m.kind || 'openai') : 'openai';
-  renderMeKindSeg();
-  $('meBase').value = m ? (m.baseUrl || '') : '';
-  $('meModel').value = m ? (m.model || '') : '';
-  // キーは接続先ごとの共有分を出す(旧形式でモデルが持っていた場合はそれを使う)
-  $('meKey').value = apiKeys[keyOf(meKindSel, $('meBase').value.trim())] || (m ? (m.apiKey || '') : '');
-  meKeyAuto = $('meKey').value;
-  fillPromptSelect($('mePrompt'), m ? m.promptId : '');
-  $('meDelete').style.display = m ? 'block' : 'none';
-  $('modelListWrap').style.display = 'none';
-  $('modelEdit').style.display = 'block';
-}
-function closeModelEdit() {
-  $('modelEdit').style.display = 'none';
-  $('modelListWrap').style.display = 'block';
-  renderModelList();
-}
-$('btnModels').addEventListener('click', () => { closeModelEdit(); openScreen('scrModels'); });
-$('btnAddModel').addEventListener('click', () => openModelEdit(null));
-$('meCancel').addEventListener('click', closeModelEdit);
-/* 接続先が変わったらキー欄をその接続先のものに差し替える。
-   ただし手で入れた値は勝手に消さない。 */
-function syncMeKey() {
-  const cur = $('meKey').value;
-  if (cur && cur !== meKeyAuto) return;
-  const v = apiKeys[keyOf(meKindSel, $('meBase').value.trim())] || '';
-  $('meKey').value = v;
-  meKeyAuto = v;
-}
-document.querySelectorAll('#meKindSeg button').forEach(b => {
-  b.addEventListener('click', () => { meKindSel = b.dataset.v; renderMeKindSeg(); syncMeKey(); });
-});
-document.querySelectorAll('#mePreset button').forEach(b => {
-  b.addEventListener('click', () => { $('meBase').value = b.dataset.u; syncMeKey(); });
-});
-$('meBase').addEventListener('input', syncMeKey);
-$('meKeyShow').addEventListener('click', () => {
-  const inp = $('meKey');
-  const isPass = inp.type === 'password';
-  inp.type = isPass ? 'text' : 'password';
-  $('meKeyShow').textContent = isPass ? '隠す' : '表示';
-});
-$('meSave').addEventListener('click', () => {
-  const label = $('meLabel').value.trim();
-  const model = $('meModel').value.trim();
-  if (!label) { toast('表示名は必須'); return; }
-  if (!model) { toast('モデル名は必須'); return; }
-  const base = $('meBase').value.trim();
-  if (meKindSel !== 'anthropic' && !base) { toast('ベースURLを入れて'); return; }
-  const url = meKindSel === 'anthropic' ? '' : base.replace(/\/+$/, '');
-  // キーは接続先ごとに保存する。同じURLの登録が増えても貼り直さなくていい
-  const entered = $('meKey').value.trim();
-  const kk = keyOf(meKindSel, url);
-  if (entered) { apiKeys[kk] = entered; saveApiKeys(); }
-  else if (!apiKeys[kk]) toast('この接続先のAPIキーがまだ未設定');
-  const data = {
-    label: label,
-    kind: meKindSel,
-    baseUrl: url,
-    model: model,
-    apiKey: '',
-    promptId: $('mePrompt').value || ''
-  };
-  if (editingModelId) Object.assign(models.find(x => x.id === editingModelId), data);
-  else models.push(Object.assign({ id: uid() }, data));
-  saveModels();
-  closeModelEdit();
-  renderActiveModelSel();
-  renderHeader();
-  toast('保存した');
-});
-$('meDelete').addEventListener('click', () => {
-  if (!editingModelId) return;
-  if (!confirm('この登録を削除する?')) return;
-  models = models.filter(x => x.id !== editingModelId);
-  if (settings.activeModelId === editingModelId) { settings.activeModelId = ''; saveSettings(); }
-  chars.forEach(c => { if (c.modelId === editingModelId) c.modelId = ''; });
-  saveModels(); saveChars();
-  closeModelEdit();
-  renderActiveModelSel();
-  renderHeader();
-  toast('削除した');
-});
-
-/* 設定画面の「使用モデル」。切り替えると紐づいたシスプロも一緒に変わる */
-function modelOptions(placeholder) {
-  return '<option value="">' + placeholder + '</option>' +
-    models.map(m => '<option value="' + m.id + '">' + esc(m.label || '(無題)') + '</option>').join('');
-}
-function renderActiveModelSel() {
-  const sel = $('setActiveModel');
-  sel.innerHTML = modelOptions('(登録を使わない)');
-  sel.value = settings.activeModelId || '';
-}
-$('setActiveModel').addEventListener('change', () => {
-  settings.activeModelId = $('setActiveModel').value || '';
-  saveSettings();
-  renderHeader();
-  const m = findModel(settings.activeModelId);
-  const pre = m && m.promptId ? prompts.find(p => p.id === m.promptId) : null;
-  toast(m ? (m.label + 'に切り替えた' + (pre ? '(シスプロ: ' + pre.title + ')' : '')) : '登録モデルの使用をやめた');
-});
-
 /* ---------------- backup ---------------- */
 $('btnExport').addEventListener('click', async () => {
   const d = new Date();
@@ -2737,7 +2440,7 @@ $('btnExport').addEventListener('click', async () => {
     toast('エクスポート失敗: 画像の読み出しでエラー');
     return;
   }
-  const data = { app: 'tsumugi', ver: 1, exported: d.toISOString(), chars: charsOut, sessions: sessionsOut, active, settings, todos, memos, shop, shopHist, prompts, models, apiKeys };
+  const data = { app: 'tsumugi', ver: 1, exported: d.toISOString(), chars: charsOut, sessions: sessionsOut, active, settings, todos, memos, shop, shopHist, endpoints };
   const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -2775,9 +2478,7 @@ $('impFile').addEventListener('change', (e) => {
       if (Array.isArray(d.memos)) LS.set('tsu_memos', d.memos);
       if (Array.isArray(d.shop)) LS.set('tsu_shop', d.shop);
       if (Array.isArray(d.shopHist)) LS.set('tsu_shopHist', d.shopHist);
-      if (Array.isArray(d.prompts)) LS.set('tsu_prompts', d.prompts);
-      if (Array.isArray(d.models)) LS.set('tsu_models', d.models);
-      if (d.apiKeys && typeof d.apiKeys === 'object') LS.set('tsu_keys', d.apiKeys);
+      if (Array.isArray(d.endpoints)) LS.set('tsu_endpoints', d.endpoints);
       toast('復元した。再読み込みする');
       setTimeout(() => location.reload(), 600);
     } catch (err) {
@@ -2816,20 +2517,73 @@ $('btnMemSum').addEventListener('click', async () => {
 
 /* ---------------- settings UI ---------------- */
 function openSettings() {
-  $('anthKey').value = settings.anthropic.apiKey;
-  $('anthModel').value = settings.anthropic.model;
-  $('oaiKey').value = settings.openai.apiKey;
-  $('oaiBase').value = settings.openai.baseUrl;
-  $('oaiModel').value = settings.openai.model;
+  renderEndpoints();
+  $('tmpModel').value = settings.openai.model || '';
   $('setTemp').value = settings.temperature;
   $('tempVal').textContent = Number(settings.temperature).toFixed(2);
   $('setMaxTok').value = settings.maxTokens;
   $('setHist').value = settings.historyLimit;
   $('setThinkBudget').value = settings.thinkBudget || 2048;
   renderSetThinkSeg();
-  renderActiveModelSel();
-  segRender();
   openScreen('scrSettings');
+}
+
+/* 接続先の4枠。▽で開いて△で畳む。入力はその場で保存する */
+function renderEndpoints() {
+  const box = $('epList');
+  box.innerHTML = '';
+  endpoints.forEach((ep, i) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'ep' + (epOpen === i ? ' open' : '');
+    wrap.innerHTML =
+      '<div class="ep-head">' +
+        '<span class="ep-name"></span>' +
+        '<button class="ep-ico ep-ren" type="button" aria-label="名前を変える">' +
+          '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5l4 4L7 21H3v-4L16.5 3.5z"/></svg>' +
+        '</button>' +
+        '<button class="ep-ico ep-tog" type="button" aria-label="開閉"></button>' +
+      '</div>' +
+      '<div class="ep-body">' +
+        '<label>ベースURL</label>' +
+        '<input class="ep-url" placeholder="https://openrouter.ai/api/v1" autocomplete="off">' +
+        '<label>APIキー</label>' +
+        '<div class="key-row"><input class="ep-key" type="password" autocomplete="off"><button class="ep-show" type="button">表示</button></div>' +
+        '<p class="hint ep-kind"></p>' +
+      '</div>';
+    const url = wrap.querySelector('.ep-url');
+    const key = wrap.querySelector('.ep-key');
+    const kind = wrap.querySelector('.ep-kind');
+    wrap.querySelector('.ep-name').textContent = ep.name || ('登録' + (i + 1));
+    url.value = ep.baseUrl || '';
+    key.value = ep.apiKey || '';
+    const showKind = () => {
+      const u = url.value.trim();
+      kind.textContent = !u ? 'URL未入力' : (isAnthropicUrl(u) ? 'Anthropic形式で送る' : 'OpenAI互換として送る');
+    };
+    showKind();
+    wrap.querySelector('.ep-head').addEventListener('click', (e) => {
+      if (e.target.closest('.ep-ren')) return;
+      epOpen = (epOpen === i) ? -1 : i;
+      renderEndpoints();
+    });
+    wrap.querySelector('.ep-ren').addEventListener('click', () => {
+      const v = prompt('この枠の名前', ep.name || ('登録' + (i + 1)));
+      if (v === null) return;
+      ep.name = v.trim() || ('登録' + (i + 1));
+      saveEndpoints();
+      renderEndpoints();
+    });
+    url.addEventListener('input', () => {
+      ep.baseUrl = url.value.trim(); saveEndpoints(); showKind(); renderHeader();
+    });
+    key.addEventListener('input', () => { ep.apiKey = key.value.trim(); saveEndpoints(); });
+    wrap.querySelector('.ep-show').addEventListener('click', () => {
+      const show = key.type === 'password';
+      key.type = show ? 'text' : 'password';
+      wrap.querySelector('.ep-show').textContent = show ? '隠す' : '表示';
+    });
+    box.appendChild(wrap);
+  });
 }
 function renderSetThinkSeg() {
   document.querySelectorAll('#setThinkSeg button').forEach(b => {
@@ -2840,36 +2594,13 @@ function renderSetThinkSeg() {
 document.querySelectorAll('#setThinkSeg button').forEach(b => {
   b.addEventListener('click', () => { settings.thinking = b.dataset.v || ''; renderSetThinkSeg(); });
 });
-function segRender() {
-  const a = settings.provider === 'anthropic';
-  $('segAnth').classList.toggle('on', a);
-  $('segOai').classList.toggle('on', !a);
-  $('grpAnth').style.display = a ? '' : 'none';
-  $('grpOai').style.display = a ? 'none' : '';
-}
 $('btnSettings').addEventListener('click', openSettings);
-$('segAnth').addEventListener('click', () => { settings.provider = 'anthropic'; segRender(); });
-$('segOai').addEventListener('click', () => { settings.provider = 'openai'; segRender(); });
 $('setTemp').addEventListener('input', () => {
   $('tempVal').textContent = Number($('setTemp').value).toFixed(2);
 });
-function toggleShow(inputId, btnId) {
-  $(btnId).addEventListener('click', () => {
-    const el = $(inputId);
-    const show = el.type === 'password';
-    el.type = show ? 'text' : 'password';
-    $(btnId).textContent = show ? '隠す' : '表示';
-  });
-}
-toggleShow('anthKey', 'anthKeyShow');
-toggleShow('oaiKey', 'oaiKeyShow');
 
 function readSettingsForm() {
-  settings.anthropic.apiKey = $('anthKey').value.trim();
-  settings.anthropic.model = $('anthModel').value.trim() || DEF_SETTINGS.anthropic.model;
-  settings.openai.apiKey = $('oaiKey').value.trim();
-  settings.openai.baseUrl = $('oaiBase').value.trim() || DEF_SETTINGS.openai.baseUrl;
-  settings.openai.model = $('oaiModel').value.trim() || DEF_SETTINGS.openai.model;
+  settings.openai.model = $('tmpModel').value.trim();
   settings.temperature = parseFloat($('setTemp').value);
   settings.maxTokens = Math.max(64, parseInt($('setMaxTok').value, 10) || 1024);
   settings.historyLimit = Math.max(0, parseInt($('setHist').value, 10) || 0);
@@ -2885,37 +2616,42 @@ $('setSave').addEventListener('click', () => {
 $('setTest').addEventListener('click', async () => {
   readSettingsForm(); saveSettings();
   toast('テスト中…');
+  // 今つながる接続先で ping を打つ
+  const api = resolveApi();
+  if (!api.apiKey) { toast('APIキーが入っていない'); return; }
+  if (!api.model) { toast('モデル名が入っていない'); return; }
   try {
-    if (settings.provider === 'anthropic') {
+    if (api.prov === 'anthropic') {
       const res = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          'x-api-key': settings.anthropic.apiKey,
+          'x-api-key': api.apiKey,
           'anthropic-version': '2023-06-01',
           'anthropic-dangerous-direct-browser-access': 'true'
         },
         body: JSON.stringify({
-          model: settings.anthropic.model, max_tokens: 16,
+          model: api.model, max_tokens: 16,
           messages: [{ role: 'user', content: 'ping' }]
         })
       });
       if (!res.ok) throw await apiError(res);
       const j = await res.json();
-      toast('OK: ' + (j.model || settings.anthropic.model) + ' から応答あり');
+      toast('OK: ' + (j.model || api.model) + ' から応答あり');
     } else {
-      const base = settings.openai.baseUrl.replace(/\/+$/, '');
+      if (!api.baseUrl) { toast('ベースURLが入っていない'); return; }
+      const base = api.baseUrl.replace(/\/+$/, '');
       const res = await fetch(base + '/chat/completions', {
         method: 'POST',
-        headers: { 'content-type': 'application/json', 'authorization': 'Bearer ' + settings.openai.apiKey },
+        headers: { 'content-type': 'application/json', 'authorization': 'Bearer ' + api.apiKey },
         body: JSON.stringify({
-          model: settings.openai.model, max_tokens: 16,
+          model: api.model, max_tokens: 16,
           messages: [{ role: 'user', content: 'ping' }]
         })
       });
       if (!res.ok) throw await apiError(res);
       const j = await res.json();
-      toast('OK: ' + (j.model || settings.openai.model) + ' から応答あり');
+      toast('OK: ' + (j.model || api.model) + ' から応答あり');
     }
   } catch (err) {
     toast('テスト失敗: ' + (err && err.message ? err.message : String(err)));
