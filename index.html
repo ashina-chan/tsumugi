@@ -387,8 +387,8 @@ input[type=range]{padding:0; height:32px; accent-color:var(--amber); background:
   <button class="icon-btn" id="btnTodo" aria-label="TODO">
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3 8-8"/><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/></svg>
   </button>
-  <button class="icon-btn" id="btnSettings" aria-label="設定">
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 8h9M19 8h1M4 16h1M11 16h9"/><circle cx="16" cy="8" r="2.5"/><circle cx="8" cy="16" r="2.5"/></svg>
+  <button class="icon-btn" id="btnCharSet" aria-label="このキャラの設定">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5l4 4L7 21H3v-4L16.5 3.5z"/></svg>
   </button>
 </header>
 
@@ -2818,7 +2818,15 @@ function renderSetThinkSeg() {
 document.querySelectorAll('#setThinkSeg button').forEach(b => {
   b.addEventListener('click', () => { settings.thinking = b.dataset.v || ''; renderSetThinkSeg(); });
 });
-$('btnSettings').addEventListener('click', openSettings);
+/* 右上は「今開いているものの設定」。全体設定はキャラ一覧の下に移した */
+$('btnCharSet').addEventListener('click', () => {
+  const room = activeRoom();
+  if (room) { openRoomEdit(room.id); return; }
+  const c = activeChar();
+  if (c) { openCharEdit(c.id); return; }
+  renderCharList();
+  openScreen('scrChars');
+});
 $('setTemp').addEventListener('input', () => {
   $('tempVal').textContent = Number($('setTemp').value).toFixed(2);
 });

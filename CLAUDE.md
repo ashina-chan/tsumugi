@@ -1,0 +1,157 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## 概要
+
+紡(tsumugi)は、キャラクターとの会話を主軸にしたPWAチャットアプリ。日本語UI、スマホでの片手操作が主な利用シーン。
+
+**バックエンドは存在しない。** GitHub Pagesで配信され、LLMのAPIをブラウザから直接叩く。データはすべて利用者の端末（localStorage / IndexedDB）にある。
+
+## ビルド・テスト
+
+**ビルド手順はない。** `package.json`もバンドラーもテストフレームワークも無く、`index.html`（約3200行）にHTML・CSS・JSがすべて入っている。編集＝この1ファイルを直接いじること。
+
+ファイル分割は意図的に見送られている。分割にはバンドラーが必要になりビルド手順が増えるため、区画はコメント（`/* ---------------- API ---------------- */` 等）で区切るに留めている。
+
+### ローカルで動かす
+
+`file://` では localStorage も IndexedDB も使えないので、**必ずHTTP経由で開く**こと。この環境にはNode.jsもPythonも入っていないため、PowerShellの`HttpListener`で立てる。スクリプトをスクラッチ領域に書いてから起動する（ワンライナーにするとbashの`$`展開で壊れる）:
+
+```powershell
+$root = 'C:\Users\user\Documents\tsumugi-main'
+$l = New-Object System.Net.HttpListener
+$l.Prefixes.Add('http://localhost:8765/')
+$l.Start()
+while ($l.IsListening) {
+  $c = $l.GetContext()
+  $p = [uri]::UnescapeDataString($c.Request.Url.LocalPath).TrimStart('/')
+  if (-not $p) { $p = 'index.html' }
+  $f = Join-Path $root $p
+  if (Test-Path $f -PathType Leaf) {
+    $b = [IO.File]::ReadAllBytes($f)
+    if ($p -match '\.html$') { $c.Response.ContentType = 'text/html; charset=utf-8' }
+    elseif ($p -match '\.png$') { $c.Response.ContentType = 'image/png' }
+    $c.Response.Headers.Add('Cache-Control','no-store')
+    $c.Response.OutputStream.Write($b, 0, $b.Length)
+  } else { $c.Response.StatusCode = 404 }
+  $c.Response.Close()
+}
+```
+
+バックグラウンド実行のプロセスは落ちることがあるので、長い作業の途中で応答しなくなったら立て直す。
+
+### 動作確認のやり方
+
+自動テストは無い。**ブラウザのコンソールから直接検証する**のが実際的で、トップレベルの関数と状態（`chars` `sessions` `models` `resolveApi()` `buildSystem()` `buildHistory()` など）はすべてスクリプトスコープに出ているのでそのまま呼べる。
+
+UIを経由する導線（「設定画面を開いた状態からモデル登録を開く」など）は、`openScreen()`を直接呼ぶ検証では重なり順の問題を見逃す。**実際のボタンを`click()`して確かめること。**
+
+**スクリプトが最後まで走ったかを必ず確かめる。** 全体が1つの`<script>`なので、途中で例外が出ると**そこから下の`let`/`const`が初期化されないまま**アプリが動き続ける。関数宣言は巻き上げられるため、一見動いているように見えて後から「◯◯ before initialization」で気づくことになる。起動直後に末尾付近の変数（`editingCharId`など）が生きているか見れば分かる。
+
+特に**トップレベルのコードから、それより下で定義された`const`の関数を呼ばないこと。** データ移行の処理を上の方に足したときに踏みやすい。`LS`のように先に定義されているものを直接使う。
+
+## デプロイ
+
+`main`にpushするとGitHub Pagesが配信する。反映まで1〜2分。
+
+Service Worker(`sw.js`)は登録されるだけで**キャッシュしない**（`fetch`ハンドラが空）ので、古いコードが残る心配はない。
+
+`core.autocrlf=false`が設定済み。単一ファイル構成では改行コードが変換されると差分が全行に広がるため、**CRLFを混入させないこと。**
+
+改修の指針は `C:\Users\user\Documents\紡 改修手順書.md` にあり、Phaseとステップ番号で作業を指定する形式になっている。
+
+## アーキテクチャ
+
+### 画面の切り替え
+
+全画面は `<div class="screen" id="scrXxx">` で、`openScreen(id)` / `closeScreen(id)` がクラスを付け外しする。通常は下からせり上がる（`translateY`）。
+
+**重なり順の落とし穴:** `.screen`はすべて`z-index:20`なので、同値だとDOM上で後ろにある方が上に表示される。ある画面から別の画面を開く導線を足すときは、**呼び出される側がDOM順で後ろにあるか確認する**こと。前に出したいのにDOM上で先にある場合は、より強い`z-index`を与える必要がある。
+
+現在の重なり: 画面20 < 暗幕21 < サイドバー22 < スクリム28 < アクションシート29。
+
+**`scrSessions`だけは例外**で、左からのサイドバーとして振る舞う。`openScreen`/`closeScreen`が`scrSessions`のときだけ暗幕(`#sideBg`)も連動させているので、**閉じる処理は必ず`closeScreen()`を通すこと**（クラスを直接外すと暗幕が残る）。右スワイプで開き、左スワイプ・暗幕タップ・戻るボタンで閉じる。iOSのブラウザバックと競合しないよう、画面左端32px以内から始まったスワイプは拾わない。
+
+### 描画
+
+文字列でHTMLを組み立てて`innerHTML`に入れる同期処理。仮想DOMのような仕組みは無く、状態が変わったら`renderHeader()` `renderChat()` `renderCharList()` などを呼び直す。
+
+`renderHeader`と`renderChat`は**薄いラッパー**で、本体（`renderHeaderBody` / `renderChatBody`）を呼んだあとに`hydrateImgs()`を回す。本体側に早期returnが複数あるため、この形にすることで呼び出し元（20箇所以上ある）を触らずに済ませている。
+
+### 画像（IndexedDB）
+
+localStorageの5MB上限を避けるため、**画像の実体はIndexedDB(`tsumugi_images`)にあり、localStorageには`img_xxxx`というIDだけが入る。**
+
+- 書き込み: `imgSave(base64)` → ID。**保存を確定する瞬間にだけ呼ぶ**（編集中断時に行き場のない画像を残さないため）。編集中のドラフトはBase64のままメモリに持つ
+- 読み出し: 描画時は`imgPlaceholder(v, cls)`が`<img data-img="ID">`を吐き、あとから`hydrateImgs(root)`が`src`を差し込む
+- 削除: キャラ削除・セッション削除時に`imgDelete()`を呼ぶ
+
+**API送信経路に注意。** `buildHistory` / `buildRoomHistory` は`o.imgs`にIDを入れたまま返し、送信直前に`resolveHistImgs()`が実データへ解決する。この2関数を非同期にしていないのは、`renderHeaderBody`がトークン数の概算に同期で呼んでいるため。**`resolveHistImgs`を通し忘れるとLLMに`"img_xxxx"`という文字列が渡り、エラーが出ないまま画像だけ認識されない状態になる。**
+
+### データ（localStorage）
+
+| キー | 内容 |
+| --- | --- |
+| `tsu_chars` | キャラクター。下記の通りモデル3枠とシスプロ3タブを持つ |
+| `tsu_sessions` | 会話ログ。`charIds`を持つものはルーム（複数キャラ） |
+| `tsu_active` | 選択中のキャラIDとセッションID |
+| `tsu_endpoints` | 接続先4枠。`{name, baseUrl, apiKey}`。**常に長さ4**で空枠も持つ |
+| `tsu_settings` | 温度・最大トークン・履歴上限・thinking など全体の値 |
+| `tsu_todos` `tsu_memos` `tsu_shop` `tsu_shopHist` | TODO・メモ・買い物リスト |
+| `tsu_migrated_v1` | 画像のIndexedDB移行が済んだかのフラグ |
+
+キャラが持つもの（どちらも**常に固定長**で、空の枠を含む）:
+
+- `prompts`: `{title, body}` × 3。システムプロンプトのタブ
+- `promptIdx`: キャラ編集で最後に開いていたタブ
+- `models`: `{label, model, epIdx, promptIdx}` × 3。`epIdx`は`tsu_endpoints`の添字、`promptIdx`は`prompts`の添字
+- `modelIdx`: 使用中のモデル枠。チャット画面のモデル名から切り替える
+- `prompt`: 使用中タブの本文の写し。履歴とエクスポートの互換のために残している
+- `promptHist`: 過去の版。`{t, p, tab}`。`tab`が無い古い版はタブ1のものとして扱う
+
+**データ構造を変えるときは移行処理を必ず書く。** 既存利用者の端末にデータが入っているため。先例が3つある。
+
+- 起動時の`migrateImages()` — 完了フラグ`tsu_migrated_v1`で二重実行を防ぐ非同期の移行
+- `endpoints`の初期化 — 旧`settings.openai`/`settings.anthropic`から枠を作る
+- `chars`の`prompts`/`models`の初期化 — 旧`c.prompt`や旧API上書きから枠を作り、足りない枠を空で埋める
+
+後者2つは読み込み直後に同期で走る。**固定長の枠を埋めるパターンなので、枠数を増やすときも同じ場所を直せばいい。**
+
+エクスポート/インポート（`btnExport`/`btnImport`）は**Base64を直接埋め込む従来形式**を保つ。エクスポート時にIDから実データを引き、インポート時にIDへ戻す。新しいキーを足したらここにも追加すること。
+
+### API
+
+送信形式は2つだけ。`callAPI()`が`api.prov`で分岐する。
+
+- **`anthropic`** — `api.anthropic.com/v1/messages` 固定
+- **`openai`** — `baseUrl`を差し替える**汎用のOpenAI互換実装**
+
+**OpenRouterもGoogleも`openai`分岐で通る。** GoogleにはOpenAI互換エンドポイント(`generativelanguage.googleapis.com/v1beta/openai`)があるため、プロバイダを増やすのにAPI実装を書く必要はなく、接続先を登録するだけでよい。
+
+**送信形式はURLで自動判定する。** `isAnthropicUrl()`が`api.anthropic.com`を見るだけ。接続先の登録に形式の選択肢は無い。
+
+`resolveApi(c)`は**キャラの使用中モデル枠から引く**。枠が指す`epIdx`の接続先からURLとキーを、枠自身からモデル名を取る。枠が空なら、埋まっている接続先で代用する。
+
+`activePrompt(c)`も**同じ枠が指すタブ**を返す。これによりモデルを切り替えるとシスプロも一緒に入れ替わる。**この連動が設計の中心**なので、片方だけ別経路で決めないこと。
+
+## コードの書き方
+
+- **コメントもUI文字列も日本語。** 既存の語り口（断定調でやや素っ気ない）に合わせる
+- コミットメッセージも日本語。何をしたかだけでなく**なぜそうしたか**を書く
+- 一括リファクタはしない。各改修で触る範囲だけ、ついでに整理する
+- 既存利用者のデータと設定を壊さないことを最優先する
+
+## 設計の考え方
+
+**会話を決めるものはキャラが持ち、全体設定は部品だけを持つ。**
+
+以前は「全体の既定をキャラが部分的に上書きする」二階建てで、キャラが人格を持つというアプリの前提と噛み合っていなかった。今は一階建てに寄せてある。
+
+- **グローバル設定**（キャラ一覧の下から開く）= 接続先の登録と、温度などアプリ全体の値だけ
+- **キャラ** = モデル3枠とシスプロ3タブ。実際に何を使うかは全部こちら
+- **チャット画面** = ヘッダーのモデル名から枠を切り替える
+
+**新しい設定項目を足すときは、まずどちらに属するか決めること。** 迷ったらキャラ側に寄せる。全体設定に会話の中身を決める値を増やすと、また二階建てに戻る。
+
+**片手で届く場所を優先する。** スマホで使うアプリなので、よく触るものを右上の隅に置かない。サイドバーは右スワイプで開き、グローバル設定はキャラ一覧の下にあり、モデル切り替えはヘッダーのモデル名から下に出る。右上は「今開いているものの設定」に充てている。
