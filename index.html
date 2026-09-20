@@ -62,7 +62,23 @@ header.bar{
 .chip-name{font-family:var(--mincho); font-size:16px; font-weight:700;
   white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
 .chip-sub{font-size:11px; color:var(--muted);
-  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  display:flex; align-items:center; gap:6px;}
+/* モデル名は押せるボタンにする。キャラ名側のタップ(キャラ切替)と
+   触る場所をはっきり分けるため、枠で囲って▾を付ける。 */
+.model-chip{
+  display:inline-flex; align-items:center; gap:4px;
+  flex-shrink:0; min-width:0; max-width:100%;
+  font-size:11px; color:var(--muted);
+  border:1px solid var(--line); border-radius:999px;
+  padding:2px 8px; background:none;
+}
+.model-chip .nm{overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.model-chip::after{content:'▾'; flex-shrink:0; opacity:.85;}
+.model-chip:active{color:var(--text); background:rgba(255,255,255,.07); border-color:var(--amber);}
+/* 狭いときに譲るのは発言数のほう。モデル名が先に潰れると何を使っているか分からなくなる */
+.chip-sub .rest{flex:1 1 0; min-width:0; overflow:hidden; text-overflow:ellipsis;}
+@media (max-width:460px){ .chip-sub .rest{display:none;} }
 .icon-btn{
   width:38px; height:38px; border-radius:10px; display:grid; place-items:center;
   color:var(--muted); flex-shrink:0;
@@ -1113,12 +1129,18 @@ function renderHeaderBody() {
     $('hName').style.color = c.color;
     const p = resolveApi().model;
     const sess = activeSession();
-    let sub = (p || 'モデル未設定') + (sess ? ' · ' + Math.floor(sess.messages.length) + '発言' : '');
+    let rest = sess ? '· ' + Math.floor(sess.messages.length) + '発言' : '';
     if (sess && sess.messages.length) {
       const n = buildSystem().length + buildHistory(sess).reduce((a, m) => a + m.content.length, 0);
-      sub += ' · 送信~' + (n >= 1000 ? (n / 1000).toFixed(1) + 'k' : n) + '字';
+      rest += ' · 送信~' + (n >= 1000 ? (n / 1000).toFixed(1) + 'k' : n) + '字';
     }
-    $('hSub').textContent = sub;
+    // モデル名だけボタンにして、キャラ名のタップと役割を分ける。
+    // ヘッダーは幅が厳しいので "google/" のような提供元の接頭辞は落として名前本体を見せる
+    const shortName = p ? String(p).split('/').pop() : '';
+    $('hSub').innerHTML =
+      '<button class="model-chip" id="hModel"><span class="nm">' +
+      esc(shortName || 'モデル未設定') + '</span></button>' +
+      (rest ? '<span class="rest">' + esc(rest) + '</span>' : '');
   } else {
     $('hAvatar').innerHTML = '紡';
     $('hAvatar').style.background = 'rgba(227,161,79,.18)';
@@ -1831,7 +1853,15 @@ document.querySelectorAll('.screen .back').forEach(b => {
   // closeScreenを通さないと、サイドバーを閉じたときに暗幕が残る
   b.addEventListener('click', () => closeScreen(b.closest('.screen').id));
 });
-$('charChip').addEventListener('click', () => { renderCharList(); openScreen('scrChars'); });
+$('charChip').addEventListener('click', (e) => {
+  // モデル名のボタンだけはキャラ切替に流さない(中身はステップ2で入れる)
+  if (e.target.closest('.model-chip')) {
+    toast('ここからモデルを選べるようにします');
+    return;
+  }
+  renderCharList();
+  openScreen('scrChars');
+});
 $('btnAddChar').addEventListener('click', () => openCharEdit(null));
 $('btnSessions').addEventListener('click', openSide);
 $('sessSearch').addEventListener('input', renderSessList);
