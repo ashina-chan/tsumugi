@@ -129,7 +129,11 @@ header.bar{
 .bubble hr{border:none; border-top:1px solid var(--line); margin:8px 0;}
 .bubble strong{font-weight:700;}
 .bubble del{text-decoration:line-through; opacity:.7;}
-.msg.ai .bubble{background:var(--panel2); border-bottom-left-radius:5px; border-left:2px solid var(--amber);}
+/* キャラの発言は箱をなくして地の文で読ませる。
+   話し手はアイコンと名前で分かるので、囲まなくても混ざらない。
+   ユーザー側の箱はそのまま残して、どっちの発言かの区別をつける。 */
+.msg.ai{max-width:100%;}
+.msg.ai .bubble{background:none; border-left:none; border-radius:0; padding:2px 4px 0;}
 .msg.user .bubble{background:var(--indigo); border-bottom-right-radius:5px;}
 .bubble em{color:var(--muted); font-style:italic;}
 .bubble details.think{margin:2px 0 8px; white-space:normal;}
