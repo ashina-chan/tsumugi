@@ -1585,13 +1585,19 @@ $('cePromptHist').addEventListener('click', () => {
   const box = $('cePromptHistBox');
   if (box.style.display !== 'none') { box.style.display = 'none'; return; }
   const c = editingCharId ? chars.find(x => x.id === editingCharId) : null;
-  const hist = (c && c.promptHist) ? c.promptHist.slice().reverse() : [];
-  if (!hist.length) { toast('保存された版はまだない。プロンプトを変えて保存すると旧版が積まれる'); return; }
+  // 今開いているタブの版だけ出す。タブが無かった頃の版はタブ1のものとして扱う
+  const all = (c && c.promptHist) ? c.promptHist : [];
+  const hist = all.filter(h => (h.tab | 0) === cePromptIdx).reverse();
+  const tabName = cePrompts[cePromptIdx].title || ('タブ' + (cePromptIdx + 1));
+  if (!hist.length) {
+    toast('「' + tabName + '」に保存された版はまだない。書き換えて保存すると旧版が積まれる');
+    return;
+  }
   box.innerHTML = '';
   hist.forEach(h => {
     const row = document.createElement('div');
     row.className = 'list-item';
-    row.innerHTML = '<div class="grow"><div class="li-sub">' + timeStr(h.t) + ' 時点の版</div>' +
+    row.innerHTML = '<div class="grow"><div class="li-sub">' + timeStr(h.t) + ' 時点の「' + esc(tabName) + '」</div>' +
       '<div class="li-sub" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text)">' + esc((h.p || '(空)').slice(0, 60)) + '</div></div>' +
       '<button class="act-chip">戻す</button>';
     row.querySelector('.act-chip').addEventListener('click', (e) => {
@@ -1651,8 +1657,13 @@ $('ceSave').addEventListener('click', async () => {
       : (old.prompt || '');
     if (oldBody !== data.prompt) {
       old.promptHist = old.promptHist || [];
-      old.promptHist.push({ t: Date.now(), p: oldBody });
-      if (old.promptHist.length > 20) old.promptHist = old.promptHist.slice(-20);
+      old.promptHist.push({ t: Date.now(), p: oldBody, tab: cePromptIdx });
+      // タブごとに直近20版まで。1本にまとめると他のタブの版に押し出されてしまう
+      const trimmed = [];
+      for (let i = 0; i < PROMPT_TABS; i++) {
+        trimmed.push(...old.promptHist.filter(h => (h.tab | 0) === i).slice(-20));
+      }
+      old.promptHist = trimmed.sort((a, b) => a.t - b.t);
     }
     Object.assign(old, data);
   } else {
