@@ -283,6 +283,8 @@ input[type=range]{padding:0; height:32px; accent-color:var(--amber); background:
 .ep.open{border-color:var(--amber);}
 .ep-head{display:flex; align-items:center; gap:6px; padding:11px 12px; cursor:pointer;}
 .ep-name{flex:1; min-width:0; font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.ep-sub{flex-shrink:1; min-width:0; font-size:11px; color:var(--muted);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
 .ep-ico{color:var(--muted); padding:4px 6px; flex-shrink:0; display:grid; place-items:center;}
 .ep-ico:active{color:var(--text);}
 .ep-tog::after{content:'▽'; font-size:13px;}
@@ -446,27 +448,9 @@ input[type=range]{padding:0; height:32px; accent-color:var(--amber); background:
     <div id="cePromptHistBox" style="display:none"></div>
     <label>最初の挨拶(任意)</label>
     <textarea id="ceGreeting" rows="4" placeholder="セッション開始時にキャラが最初に発する言葉"></textarea>
-    <label>使用API(このキャラ専用)</label>
-    <label>プロバイダの上書き</label>
-    <div class="seg" id="ceApiSeg">
-      <button data-v="">デフォルト</button>
-      <button data-v="anthropic">Anthropic</button>
-      <button data-v="openai">OpenAI互換</button>
-    </div>
-    <label>モデル名の上書き(空欄=全体設定のまま)</label>
-    <input id="ceModel" placeholder="例: gemini-2.5-flash" autocomplete="off">
-    <div id="ceApiDetails">
-      <label>APIキーの上書き(空欄=全体設定のまま)</label>
-      <div class="key-row">
-        <input id="ceApiKey" type="password" placeholder="このキャラ専用のキー" autocomplete="off">
-        <button id="ceApiKeyToggle" type="button">表示</button>
-      </div>
-      <div id="ceBaseUrlRow">
-        <label>ベースURLの上書き(空欄=全体設定のまま)</label>
-        <input id="ceBaseUrl" placeholder="例: https://generativelanguage.googleapis.com/v1beta/openai" autocomplete="off">
-      </div>
-    </div>
-    <p class="hint">キー・URLが空欄なら⚙全体設定を使う。キャラごとに接続先を変えたいときだけ入力。</p>
+    <label>モデル(このキャラ専用)</label>
+    <div id="ceModelList"></div>
+    <p class="hint">接続先は⚙グローバル設定に登録したものから選ぶ。シスプロを紐づけておくと、チャット画面でモデルを切り替えたときに一緒に入れ替わる。</p>
     <label>思考(thinking / reasoning)</label>
     <div class="seg" id="ceThinkSeg">
       <button data-v="">全体設定</button>
@@ -547,10 +531,6 @@ input[type=range]{padding:0; height:32px; accent-color:var(--amber); background:
     <label>接続先</label>
     <div id="epList"></div>
     <p class="hint">ベースURLとAPIキーの組。キャラのモデル設定からここの登録を選んで使う。URLが api.anthropic.com ならAnthropic形式、それ以外はOpenAI互換として送る。</p>
-
-    <label>モデル名（仮）</label>
-    <input id="tmpModel" placeholder="例: google/gemini-2.5-flash" autocomplete="off">
-    <p class="hint">キャラごとのモデル設定ができるまでの仮置き。今はここの名前が全キャラ共通で使われる。</p>
 
     <label>温度 (temperature)</label>
     <div class="row">
@@ -847,10 +827,46 @@ const PROMPT_TABS = 3;
   // saveChars() はこの下で定義されるのでまだ呼べない。LSを直接使う
   if (moved) LS.set('tsu_chars', chars);
 })();
-/* 今そのキャラが使っているシスプロ */
+/* キャラはモデルを3枠持つ。1枠 = 表示名 + モデル名 + 使う接続先 + 使うシスプロ。
+   modelIdx が今使っている枠で、チャット画面のモデル名から切り替える。
+   旧データ(キャラごとのAPI上書き)は1枠目へ移す。 */
+const MODEL_SLOTS = 3;
+(() => {
+  let moved = false;
+  chars.forEach(c => {
+    if (!Array.isArray(c.models)) {
+      // 旧設定で使っていた接続先に近い枠を探す
+      const u = String(c.baseUrl || '').replace(/\/+$/, '');
+      let ep = endpoints.findIndex(e => u && String(e.baseUrl || '').replace(/\/+$/, '') === u);
+      if (ep < 0) ep = 0;
+      c.models = [{
+        label: 'モデル1',
+        model: c.apiModel || settings.openai.model || '',
+        epIdx: ep,
+        promptIdx: c.promptIdx | 0
+      }];
+      moved = true;
+    }
+    while (c.models.length < MODEL_SLOTS) {
+      c.models.push({ label: 'モデル' + (c.models.length + 1), model: '', epIdx: 0, promptIdx: 0 });
+    }
+    c.models.length = MODEL_SLOTS;
+    const i = c.modelIdx | 0;
+    c.modelIdx = (i >= 0 && i < MODEL_SLOTS) ? i : 0;
+  });
+  if (moved) LS.set('tsu_chars', chars);
+})();
+/* 今そのキャラが使っているモデル枠 */
+function activeModelSlot(c) {
+  if (!c || !Array.isArray(c.models)) return null;
+  return c.models[c.modelIdx | 0] || null;
+}
+/* 今そのキャラが使っているシスプロ。モデル枠が指しているタブを使う */
 function activePrompt(c) {
   if (!c) return '';
-  const p = Array.isArray(c.prompts) ? c.prompts[c.promptIdx | 0] : null;
+  const m = activeModelSlot(c);
+  const i = (m && (m.promptIdx | 0) < PROMPT_TABS) ? Math.max(0, m.promptIdx | 0) : (c.promptIdx | 0);
+  const p = Array.isArray(c.prompts) ? c.prompts[i] : null;
   return p ? (p.body || '') : (c.prompt || '');
 }
 
@@ -863,13 +879,15 @@ let editingMemoId = null;
 let editingShopId = null;
 let todoTabActive = 'todo';
 let ceColorSel = COLORS[0];
-let ceApiSel = '';
 let ceTodoSel = 'none';
 let ceMemoSel = 'off';
 let ceShopSel = 'off';
 let ceThinkSel = '';
 let cePrompts = [];    // 編集中のシスプロ3タブ
 let cePromptIdx = 0;
+let ceModels = [];     // 編集中のモデル3枠
+let ceModelIdx = 0;    // 使用中の枠
+let ceModelOpen = -1;  // 展開中の枠
 let ceImg = '';        // 編集中の下書き(Base64)。保存確定時にだけIndexedDBへ書く
 let ceImgId = '';      // 編集対象キャラが元々持っていた画像ID
 let ceImgDirty = false;
@@ -1413,14 +1431,17 @@ function openCharEdit(id) {
   cePromptIdx = (c && (c.promptIdx | 0) < PROMPT_TABS) ? Math.max(0, c.promptIdx | 0) : 0;
   $('cePrompt').value = cePrompts[cePromptIdx].body || '';
   renderPromptTabs();
+  ceModels = (c && Array.isArray(c.models))
+    ? c.models.map(m => ({ label: m.label, model: m.model, epIdx: m.epIdx | 0, promptIdx: m.promptIdx | 0 }))
+    : [];
+  while (ceModels.length < MODEL_SLOTS) {
+    ceModels.push({ label: 'モデル' + (ceModels.length + 1), model: '', epIdx: 0, promptIdx: 0 });
+  }
+  ceModels.length = MODEL_SLOTS;
+  ceModelIdx = (c && (c.modelIdx | 0) < MODEL_SLOTS) ? Math.max(0, c.modelIdx | 0) : 0;
+  ceModelOpen = ceModelIdx;
+  renderCeModels();
   $('ceGreeting').value = c ? (c.greeting || '') : '';
-  $('ceModel').value = c ? (c.apiModel || '') : '';
-  $('ceApiKey').value = c ? (c.apiKey || '') : '';
-  $('ceBaseUrl').value = c ? (c.baseUrl || '') : '';
-  $('ceMemory').value = c ? (c.memory || '') : '';
-  ceApiSel = c ? (c.apiProvider || '') : '';
-  renderApiSeg();
-  updateCeApiDetails();
   ceTodoSel = c ? (c.todoLevel || 'none') : 'none';
   renderTodoSeg();
   ceMemoSel = c ? (c.memoLevel || 'off') : 'off';
@@ -1447,6 +1468,69 @@ function openCharEdit(id) {
   $('ceDelete').style.display = c ? 'block' : 'none';
   openScreen('scrCharEdit');
 }
+/* キャラのモデル3枠。接続先はグローバル設定の登録から、
+   シスプロはこのキャラのタブから選ぶ。使用中の枠に ▸ を付ける。 */
+function renderCeModels() {
+  const box = $('ceModelList');
+  box.innerHTML = '';
+  ceModels.forEach((m, i) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'ep' + (ceModelOpen === i ? ' open' : '');
+    wrap.innerHTML =
+      '<div class="ep-head">' +
+        '<span class="ep-name"></span>' +
+        '<span class="ep-sub"></span>' +
+        '<button class="ep-ico ep-tog" type="button" aria-label="開閉"></button>' +
+      '</div>' +
+      '<div class="ep-body">' +
+        '<label>表示名</label><input class="m-label" placeholder="例: 日常" autocomplete="off">' +
+        '<label>モデル名</label><input class="m-model" placeholder="例: google/gemini-2.5-flash" autocomplete="off">' +
+        '<label>接続先</label><select class="m-ep"></select>' +
+        '<label>使うシスプロ</label><select class="m-prompt"></select>' +
+        '<button class="btn ghost m-use" type="button" style="margin-top:14px">この枠を使う</button>' +
+      '</div>';
+    const nameEl = wrap.querySelector('.ep-name');
+    const subEl = wrap.querySelector('.ep-sub');
+    const lab = wrap.querySelector('.m-label');
+    const mod = wrap.querySelector('.m-model');
+    const selEp = wrap.querySelector('.m-ep');
+    const selPr = wrap.querySelector('.m-prompt');
+    const useBtn = wrap.querySelector('.m-use');
+
+    const label = () => m.label || ('モデル' + (i + 1));
+    const paint = () => {
+      nameEl.textContent = (ceModelIdx === i ? '▸ ' : '') + label();
+      subEl.textContent = m.model || '未設定';
+    };
+    lab.value = m.label || '';
+    mod.value = m.model || '';
+    selEp.innerHTML = endpoints
+      .map((e, j) => '<option value="' + j + '">' + esc(e.name || ('登録' + (j + 1))) +
+        (e.baseUrl ? '' : '（未設定）') + '</option>').join('');
+    selEp.value = String(m.epIdx | 0);
+    selPr.innerHTML = cePrompts
+      .map((p, j) => '<option value="' + j + '">' + esc(p.title || ('タブ' + (j + 1))) + '</option>').join('');
+    selPr.value = String(m.promptIdx | 0);
+    useBtn.style.display = (ceModelIdx === i) ? 'none' : '';
+    paint();
+
+    wrap.querySelector('.ep-head').addEventListener('click', () => {
+      ceModelOpen = (ceModelOpen === i) ? -1 : i;
+      renderCeModels();
+    });
+    lab.addEventListener('input', () => { m.label = lab.value.trim(); paint(); });
+    mod.addEventListener('input', () => { m.model = mod.value.trim(); paint(); });
+    selEp.addEventListener('change', () => { m.epIdx = parseInt(selEp.value, 10) || 0; });
+    selPr.addEventListener('change', () => { m.promptIdx = parseInt(selPr.value, 10) || 0; });
+    useBtn.addEventListener('click', () => {
+      ceModelIdx = i;
+      renderCeModels();
+      toast('「' + label() + '」を使う。保存で確定');
+    });
+    box.appendChild(wrap);
+  });
+}
+
 /* シスプロのタブ。選んでいるタブの本文が下のtextareaに出る。
    タブを移るときは表示中の内容を退避してから入れ替える。 */
 function renderPromptTabs() {
@@ -1468,6 +1552,7 @@ function renderPromptTabs() {
         if (v === null) return;
         p.title = v.trim() || ('タブ' + (i + 1));
         renderPromptTabs();
+        renderCeModels();   // モデル枠の「使うシスプロ」の表示名も直す
         return;
       }
       cePrompts[cePromptIdx].body = $('cePrompt').value;
@@ -1530,25 +1615,6 @@ $('ceImgFile').addEventListener('change', async (e) => {
 });
 $('ceImgDel').addEventListener('click', () => { ceImg = ''; ceImgDirty = true; updateCePreview(); });
 $('ceIcon').addEventListener('input', updateCePreview);
-function renderApiSeg() {
-  document.querySelectorAll('#ceApiSeg button').forEach(b => {
-    b.classList.toggle('on', (b.dataset.v || '') === ceApiSel);
-  });
-}
-function updateCeApiDetails() {
-  const show = ceApiSel !== '';
-  $('ceApiDetails').style.display = show ? '' : 'none';
-  $('ceBaseUrlRow').style.display = ceApiSel === 'openai' ? '' : 'none';
-}
-document.querySelectorAll('#ceApiSeg button').forEach(b => {
-  b.addEventListener('click', () => { ceApiSel = b.dataset.v || ''; renderApiSeg(); updateCeApiDetails(); });
-});
-$('ceApiKeyToggle').addEventListener('click', () => {
-  const inp = $('ceApiKey');
-  const isPass = inp.type === 'password';
-  inp.type = isPass ? 'text' : 'password';
-  $('ceApiKeyToggle').textContent = isPass ? '隠す' : '表示';
-});
 function renderTodoSeg() {
   document.querySelectorAll('#ceTodoSeg button').forEach(b => {
     b.classList.toggle('on', (b.dataset.v || 'none') === ceTodoSel);
@@ -1638,10 +1704,11 @@ $('ceSave').addEventListener('click', async () => {
     // 履歴やエクスポートなど既存の仕組みのために、使用中のタブの内容を写しておく
     prompt: tabs[cePromptIdx].body,
     greeting: $('ceGreeting').value.trim(),
-    apiProvider: ceApiSel,
-    apiModel: $('ceModel').value.trim(),
-    apiKey: $('ceApiKey').value.trim(),
-    baseUrl: $('ceBaseUrl').value.trim(),
+    models: ceModels.map(m => ({
+      label: m.label || '', model: m.model || '',
+      epIdx: m.epIdx | 0, promptIdx: m.promptIdx | 0
+    })),
+    modelIdx: ceModelIdx,
     todoLevel: ceTodoSel,
     memoLevel: ceMemoSel,
     shopLevel: ceShopSel,
@@ -2145,23 +2212,19 @@ async function generateFor(spk, prevAlts) {
 }
 
 /* ---------------- API ---------------- */
-/* どの接続先を使うか。キャラごとのモデル設定を入れるまでの暫定で、
-   キャラ個別の上書きがあればそれ、無ければ最初に埋まっている枠を使う。 */
-function activeEndpoint(c) {
-  if (c && (c.baseUrl || c.apiKey)) {
-    return { baseUrl: c.baseUrl || '', apiKey: c.apiKey || '' };
-  }
-  return endpoints.find(e => e.baseUrl || e.apiKey) || { baseUrl: '', apiKey: '' };
-}
+/* 使っているモデル枠から接続先を引く。枠が未設定なら埋まっている枠で代用する */
 function resolveApi(cArg) {
   const c = cArg || activeChar();
-  const ep = activeEndpoint(c);
+  const m = activeModelSlot(c);
+  const ep = (m && endpoints[m.epIdx | 0])
+    || endpoints.find(e => e.baseUrl || e.apiKey)
+    || { baseUrl: '', apiKey: '' };
   const anth = isAnthropicUrl(ep.baseUrl);
   return {
     prov: anth ? 'anthropic' : 'openai',
-    model: (c && c.apiModel) || settings.openai.model || '',
-    apiKey: ep.apiKey,
-    baseUrl: anth ? null : ep.baseUrl,
+    model: (m && m.model) || '',
+    apiKey: ep.apiKey || '',
+    baseUrl: anth ? null : (ep.baseUrl || ''),
     think: (c && c.thinkMode) || settings.thinking || ''
   };
 }
@@ -2622,7 +2685,6 @@ $('btnMemSum').addEventListener('click', async () => {
 /* ---------------- settings UI ---------------- */
 function openSettings() {
   renderEndpoints();
-  $('tmpModel').value = settings.openai.model || '';
   $('setTemp').value = settings.temperature;
   $('tempVal').textContent = Number(settings.temperature).toFixed(2);
   $('setMaxTok').value = settings.maxTokens;
@@ -2704,7 +2766,6 @@ $('setTemp').addEventListener('input', () => {
 });
 
 function readSettingsForm() {
-  settings.openai.model = $('tmpModel').value.trim();
   settings.temperature = parseFloat($('setTemp').value);
   settings.maxTokens = Math.max(64, parseInt($('setMaxTok').value, 10) || 1024);
   settings.historyLimit = Math.max(0, parseInt($('setHist').value, 10) || 0);
