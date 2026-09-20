@@ -262,6 +262,16 @@ label:first-child{margin-top:0;}
 }
 #sheet button:last-child{border-bottom:none;}
 #sheet button.danger{color:var(--danger);}
+/* モデル選択のシート */
+.sheet-head{font-size:11.5px; color:var(--muted); padding:2px 4px 8px;}
+#sheet button.ms-item{align-items:flex-start; gap:8px;}
+.ms-mark{width:12px; flex-shrink:0; color:var(--amber); font-size:13px; line-height:1.5;}
+.ms-item.on .ms-mark::before{content:'▸';}
+.ms-body{display:flex; flex-direction:column; gap:3px; min-width:0; text-align:left;}
+.ms-name{font-size:15px;}
+.ms-item.on .ms-name{color:var(--amber); font-weight:700;}
+.ms-sub{font-size:11.5px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+#sheet button.ms-edit{justify-content:center; color:var(--muted); font-size:13px;}
 #sheet button svg{flex-shrink:0; opacity:.7;}
 
 /* ---------- misc ---------- */
@@ -1930,9 +1940,9 @@ document.querySelectorAll('.screen .back').forEach(b => {
   b.addEventListener('click', () => closeScreen(b.closest('.screen').id));
 });
 $('charChip').addEventListener('click', (e) => {
-  // モデル名のボタンだけはキャラ切替に流さない(中身はステップ2で入れる)
+  // モデル名のボタンだけはキャラ切替に流さず、モデル選択を開く
   if (e.target.closest('.model-chip')) {
-    toast('ここからモデルを選べるようにします');
+    openModelSheet();
     return;
   }
   renderCharList();
@@ -2030,6 +2040,54 @@ function openSheet(idx) {
 function closeSheet() {
   $('scrim').classList.remove('show');
   $('sheet').classList.remove('open');
+}
+
+/* チャットのモデル名から開く。このキャラのモデル3枠を並べて選ばせる。
+   選ぶと接続先もシスプロも一緒に入れ替わる。 */
+function openModelSheet() {
+  const c = activeChar();
+  if (!c || !Array.isArray(c.models)) { toast('先にキャラを選んで'); return; }
+  const body = $('sheetBody');
+  body.innerHTML = '';
+  const head = document.createElement('div');
+  head.className = 'sheet-head';
+  head.textContent = c.name + ' のモデル';
+  body.appendChild(head);
+
+  c.models.forEach((m, i) => {
+    const label = m.label || ('モデル' + (i + 1));
+    const pre = (c.prompts && c.prompts[m.promptIdx | 0]) || null;
+    const ep = endpoints[m.epIdx | 0] || null;
+    const b = document.createElement('button');
+    b.className = 'ms-item' + (c.modelIdx === i ? ' on' : '');
+    b.innerHTML = '<span class="ms-mark"></span>' +
+      '<span class="ms-body"><span class="ms-name"></span><span class="ms-sub"></span></span>';
+    b.querySelector('.ms-name').textContent = label;
+    b.querySelector('.ms-sub').textContent = [
+      m.model || 'モデル名なし',
+      ep && ep.name ? ep.name : null,
+      pre ? (pre.title || '') : null
+    ].filter(Boolean).join(' · ');
+    b.addEventListener('click', () => {
+      closeSheet();
+      if (c.modelIdx === i) return;
+      if (!m.model) { toast('「' + label + '」にモデル名が入っていない'); return; }
+      c.modelIdx = i;
+      saveChars();
+      renderHeader();
+      toast(label + 'に切り替えた' + (pre ? '(シスプロ: ' + (pre.title || '') + ')' : ''));
+    });
+    body.appendChild(b);
+  });
+
+  const ed = document.createElement('button');
+  ed.className = 'ms-edit';
+  ed.innerHTML = '<span>モデルを編集…</span>';
+  ed.addEventListener('click', () => { closeSheet(); openCharEdit(c.id); });
+  body.appendChild(ed);
+
+  $('scrim').classList.add('show');
+  $('sheet').classList.add('open');
 }
 $('scrim').addEventListener('click', closeSheet);
 
