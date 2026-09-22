@@ -1166,7 +1166,11 @@ function renderChatBody() {
   });
   box.innerHTML = html;
   box.querySelectorAll('.msg').forEach(el => {
-    el.addEventListener('click', () => openSheet(parseInt(el.dataset.i, 10)));
+    el.addEventListener('click', (e) => {
+      // 思考ログの開閉はシートを出さない(summaryのタップが親まで伝わるため)
+      if (e.target.closest('details.think')) return;
+      openSheet(parseInt(el.dataset.i, 10));
+    });
   });
   box.querySelectorAll('.act-chip').forEach(ch => {
     ch.addEventListener('click', (e) => {
