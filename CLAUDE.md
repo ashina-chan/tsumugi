@@ -51,7 +51,7 @@ UIを経由する導線（「設定画面を開いた状態からモデル登録
 
 特に**トップレベルのコードから、それより下で定義された`const`の関数を呼ばないこと。** データ移行の処理を上の方に足したときに踏みやすい。`LS`のように先に定義されているものを直接使う。
 
-**検証で利用者のデータを壊さないこと。** 開発用の空データではなく本人の会話ログが入った状態で確認することになる。ダミーを足すときは`saveSessions()`を通さずメモリ上だけで`renderChat()`し、終わったらリロードで捨てる。`localStorage`に試しの値を書いたら消して戻す。
+**検証で利用者のデータを壊さないこと。** 開発用の空データではなく本人の会話ログが入った状態で確認することになる。ダミーを足すときは`saveSessions()`を通さずメモリ上だけで`renderChat()`し、終わったらリロードで捨てる。`localStorage`に試しの値を書いたら消して戻す。IndexedDBに書いてしまうとリロードでは戻らないので、`IDB.sessSync()`や`IDB.sessPut()`は検証で気軽に叩かない。
 
 **ブラウザによって黙って無視されるAPIがある。** `scrollTo({behavior:'smooth'})`は例外も出さず何も起きないことがあった。動いたつもりにならないよう、スクロール量や座標のような**結果の値を読んで確かめる**。
 
@@ -87,9 +87,20 @@ Service Worker(`sw.js`)は登録されるだけで**キャッシュしない**�
 
 生成中の吹き出しは履歴に入る前の仮のもので、`appendStreamBubble()`が返すハンドルで更新し、確定時に`remove()`してから`renderChat()`で描き直す。
 
-### 画像（IndexedDB）
+### IndexedDB
 
-localStorageの5MB上限を避けるため、**画像の実体はIndexedDB(`tsumugi_images`)にあり、localStorageには`img_xxxx`というIDだけが入る。**
+DBは`tsumugi_images`（現在ver 2）ひとつで、ストアが2本ある。名前が画像寄りなのは画像用として作った名残で、**改名すると既存利用者の画像が丸ごと消えるのでそのまま使う。**
+
+| ストア | 中身 |
+| --- | --- |
+| `images` | 画像の実体。`{id:'img_xxxx', data, created}` |
+| `sessions` | 会話ログ。**1セッション=1レコード**（`keyPath: 'id'`） |
+
+**ストアを足すときは`DB_VER`を上げて`onupgradeneeded`に`createObjectStore`を書く。** バージョンを上げると別タブが古いまま掴んでいる間アップグレードが止まるので、`onblocked`でその旨を知らせている。
+
+#### 画像
+
+localStorageの5MB上限を避けるため、**画像の実体はIndexedDBにあり、localStorageには`img_xxxx`というIDだけが入る。**
 
 - 書き込み: `imgSave(base64)` → ID。**保存を確定する瞬間にだけ呼ぶ**（編集中断時に行き場のない画像を残さないため）。編集中のドラフトはBase64のままメモリに持つ
 - 読み出し: 描画時は`imgPlaceholder(v, cls)`が`<img data-img="ID">`を吐き、あとから`hydrateImgs(root)`が`src`を差し込む
@@ -97,18 +108,31 @@ localStorageの5MB上限を避けるため、**画像の実体はIndexedDB(`tsum
 
 **API送信経路に注意。** `buildHistory` / `buildRoomHistory` は`o.imgs`にIDを入れたまま返し、送信直前に`resolveHistImgs()`が実データへ解決する。この2関数を非同期にしていないのは、`renderHeaderBody`がトークン数の概算に同期で呼んでいるため。**`resolveHistImgs`を通し忘れるとLLMに`"img_xxxx"`という文字列が渡り、エラーが出ないまま画像だけ認識されない状態になる。**
 
+#### セッション
+
+会話ログも5MBに収まらなくなるのでIndexedDBに置いている。ただし**読み取りは全部メモリ上の`sessions`配列で済ませる**形にしてあり、非同期になったのは保存側だけ。`activeSession()`も`buildHistory()`も同期のまま使える。
+
+- 読み込み: 起動時に`loadSessions()`が1回だけ`IDB.sessAll()`で全部読み、`updated`の新しい順に並べて`sessions`に入れる（localStorage時代の`unshift`と同じ並び）
+- 保存: `await saveSessions()`。**呼び出し側から見た意味は今まで通り「今の`sessions`を保存する」で、変わったのは`await`が要ることだけ。** 中身は`IDB.sessSync()`が1トランザクションで、消えたセッションのレコードを落としてから今ある分を書き直す
+- **`sessionsReady`が立つまで`saveSessions()`は何もしない。** 読み込み前や読み込み失敗時に空の配列でストアを上書きしないため
+
+**`sessions`を触る処理を足すときは、保存まで`await`で繋ぐこと。** `saveSessions()`を呼ぶ関数は`async`になり、その呼び出し元（クリックハンドラを含む）も`async`にして`await`する。途中で`await`を落とすと、画面を閉じた直後や連続操作で保存が前後する。
+
+読み込みに失敗した場合は`sessions`を空のまま進めず、localStorageに残っている分があればそれを表示に使い、`sessionsReady`は立てない（**表示はするが保存はしない**）。元データを壊さないための安全弁。
+
 ### データ（localStorage）
 
 | キー | 内容 |
 | --- | --- |
 | `tsu_chars` | キャラクター。下記の通りモデル3枠とシスプロ3タブを持つ |
-| `tsu_sessions` | 会話ログ。`charIds`を持つものはルーム（複数キャラ） |
 | `tsu_active` | 選択中のキャラIDとセッションID |
 | `tsu_endpoints` | 接続先4枠。`{name, baseUrl, apiKey}`。**常に長さ4**で空枠も持つ |
 | `tsu_settings` | 温度・最大トークン・履歴上限・thinking など全体の値 |
 | `tsu_todos` `tsu_memos` `tsu_shop` `tsu_shopHist` | TODO・メモ・買い物リスト |
 | `tsu_migrated_v1` | 画像のIndexedDB移行が済んだかのフラグ |
 | `tsu_lastExport` | 最後にエクスポートした時刻。14日空くと起動時にバナーで催促する |
+
+**会話ログ（旧`tsu_sessions`）はもうlocalStorageに無い。** IndexedDBの`sessions`ストアにある。起動時に`loadSessions()`が旧キーを見つけたら写して消すので、**新しくlocalStorageへ書き戻さないこと。**
 
 キャラが持つもの（どちらも**常に固定長**で、空の枠を含む）:
 
@@ -123,13 +147,16 @@ localStorageの5MB上限を避けるため、**画像の実体はIndexedDB(`tsum
 
 セッション側は`name`が**任意**。無ければ`sessionTitle()`が最初の発言から作る。**古いデータには無いので、必ず「無い場合」を書くこと。**
 
-**データ構造を変えるときは移行処理を必ず書く。** 既存利用者の端末にデータが入っているため。先例が3つある。
+**データ構造を変えるときは移行処理を必ず書く。** 既存利用者の端末にデータが入っているため。先例が4つある。
 
 - 起動時の`migrateImages()` — 完了フラグ`tsu_migrated_v1`で二重実行を防ぐ非同期の移行
+- 起動時の`loadSessions()` — localStorageの`tsu_sessions`をIndexedDBへ写す。**フラグではなく旧キーの有無で判断し、写した分がストアに入ったのを読み直して確かめてから消す。** 途中で落ちたら次回起動でやり直しになるだけで、消えるタイミングが無い。やり直しのときに古い方で上書きしないよう、既にIDB側にあるものは`updated`の新しい方を残す
 - `endpoints`の初期化 — 旧`settings.openai`/`settings.anthropic`から枠を作る
 - `chars`の`prompts`/`models`の初期化 — 旧`c.prompt`や旧API上書きから枠を作り、足りない枠を空で埋める
 
 後者2つは読み込み直後に同期で走る。**固定長の枠を埋めるパターンなので、枠数を増やすときも同じ場所を直せばいい。**
+
+**起動処理の順番に注意。** `init()`は`loadSessions()`→`migrateImages()`の順で、`migrateImages()`は`sessions`を触るので先に読めていないと実行しない（中途半端に画像だけIDへ変換して保存されないのを防ぐ）。
 
 エクスポート/インポート（`btnExport`/`btnImport`）は**Base64を直接埋め込む従来形式**を保つ。エクスポート時にIDから実データを引き、インポート時にIDへ戻す。新しいキーを足したらここにも追加すること。
 

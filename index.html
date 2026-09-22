@@ -747,38 +747,47 @@ const LS = {
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { toast('保存に失敗。容量がいっぱいかも'); } }
 };
 
-/* ---------------- IndexedDB: 画像ストア ----------------
-   画像(キャラアイコン/チャット添付)はlocalStorageの5MB上限を圧迫するため
-   IndexedDBへ逃がす。localStorage側には "img_xxxx" のIDだけを残す。 */
+/* ---------------- IndexedDB: 画像ストア + セッションストア ----------------
+   画像(キャラアイコン/チャット添付)と会話ログ(セッション)はどちらも
+   localStorageの5MB上限を圧迫するのでIndexedDBへ逃がす。
+   localStorage側に残るのは画像の "img_xxxx" というIDだけ。
+
+   DB名が tsumugi_images なのは画像用として作ったときの名残。改名すると
+   既存利用者の画像が丸ごと見えなくなるので、そのまま使い続ける。
+   ストアを1つ足したのでDB_VERを2に上げてある。 */
 const IDB = (() => {
-  const DB_NAME = 'tsumugi_images', DB_VER = 1, STORE = 'images';
+  const DB_NAME = 'tsumugi_images', DB_VER = 2;
+  const S_IMG = 'images', S_SESS = 'sessions';
   let dbp = null;
   const open = () => dbp || (dbp = new Promise((res, rej) => {
     const rq = indexedDB.open(DB_NAME, DB_VER);
     rq.onupgradeneeded = () => {
       const db = rq.result;
-      if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE, { keyPath: 'id' });
+      if (!db.objectStoreNames.contains(S_IMG)) db.createObjectStore(S_IMG, { keyPath: 'id' });
+      if (!db.objectStoreNames.contains(S_SESS)) db.createObjectStore(S_SESS, { keyPath: 'id' });
     };
+    // 別のタブが古いバージョンでDBを掴んだままだとアップグレードが始まらない
+    rq.onblocked = () => toast('別のタブで紡が開いてる。閉じてから開き直して');
     rq.onsuccess = () => res(rq.result);
     rq.onerror = () => rej(rq.error);
   }));
-  const run = (mode, fn) => open().then(db => new Promise((res, rej) => {
-    const t = db.transaction(STORE, mode);
-    const rq = fn(t.objectStore(STORE));
+  const run = (store, mode, fn) => open().then(db => new Promise((res, rej) => {
+    const t = db.transaction(store, mode);
+    const rq = fn(t.objectStore(store));
     t.oncomplete = () => res(rq ? rq.result : undefined);
     t.onerror = () => rej(t.error);
     t.onabort = () => rej(t.error);
   }));
-  // 件数と合計サイズ。getAll()だと全画像をメモリに載せてしまうのでカーソルで数える
-  const stat = () => open().then(db => new Promise((res, rej) => {
-    const t = db.transaction(STORE, 'readonly');
-    const rq = t.objectStore(STORE).openCursor();
+  // 件数と合計サイズ。getAll()だと中身を全部メモリに載せてしまうのでカーソルで数える
+  const stat = (store, size) => open().then(db => new Promise((res, rej) => {
+    const t = db.transaction(store, 'readonly');
+    const rq = t.objectStore(store).openCursor();
     let n = 0, bytes = 0;
     rq.onsuccess = () => {
       const c = rq.result;
       if (!c) return;
       n++;
-      bytes += ((c.value && c.value.data) || '').length;   // Base64はASCIIなので1文字≒1バイト
+      bytes += size(c.value);
       c.continue();
     };
     t.oncomplete = () => res({ n: n, bytes: bytes });
@@ -786,10 +795,33 @@ const IDB = (() => {
     t.onabort = () => rej(t.error);
   }));
   return {
-    get: (id) => run('readonly', st => st.get(id)),
-    put: (rec) => run('readwrite', st => st.put(rec)),
-    del: (id) => run('readwrite', st => st.delete(id)),
-    stat: stat
+    get: (id) => run(S_IMG, 'readonly', st => st.get(id)),
+    put: (rec) => run(S_IMG, 'readwrite', st => st.put(rec)),
+    del: (id) => run(S_IMG, 'readwrite', st => st.delete(id)),
+    stat: () => stat(S_IMG, v => ((v && v.data) || '').length),   // Base64はASCIIなので1文字≒1バイト
+
+    /* セッションは1件=1レコード。まとめて1つのレコードにすると
+       結局それ全体を毎回書き直すことになるので、セッション単位に分ける。 */
+    sessAll: () => run(S_SESS, 'readonly', st => st.getAll()),
+    sessKeys: () => run(S_SESS, 'readonly', st => st.getAllKeys()),
+    sessPut: (list) => run(S_SESS, 'readwrite', st => { list.forEach(s => st.put(s)); }),
+    /* メモリ上のsessions配列にストアを揃える。消えたセッションのレコードも落とす。
+       1つのトランザクションでやるので、途中で中途半端な状態にはならない。 */
+    sessSync: (list) => open().then(db => new Promise((res, rej) => {
+      const t = db.transaction(S_SESS, 'readwrite');
+      const st = t.objectStore(S_SESS);
+      const keep = {};
+      list.forEach(s => { keep[s.id] = 1; });
+      const kq = st.getAllKeys();
+      kq.onsuccess = () => {
+        (kq.result || []).forEach(k => { if (!keep[k]) st.delete(k); });
+        list.forEach(s => st.put(s));
+      };
+      t.oncomplete = () => res(true);
+      t.onerror = () => rej(t.error);
+      t.onabort = () => rej(t.error);
+    })),
+    sessStat: () => stat(S_SESS, v => { try { return JSON.stringify(v).length; } catch (e) { return 0; } })
   };
 })();
 
@@ -842,7 +874,11 @@ const DEF_SETTINGS = {
 
 let settings = loadSettings();
 let chars = LS.get('tsu_chars', []);
-let sessions = LS.get('tsu_sessions', []);
+/* セッションの実体はIndexedDB。ここは起動時にloadSessions()が埋めるまで空。
+   読み込みが済む前に保存が走ると空の配列でストアを上書きしてしまうので、
+   sessionsReadyが立つまでsaveSessions()は何もしない。 */
+let sessions = [];
+let sessionsReady = false;
 let active = LS.get('tsu_active', { charId: null, sessionId: null });
 
 let todos = LS.get('tsu_todos', []);
@@ -1000,7 +1036,16 @@ function loadSettings() {
 }
 const saveSettings = () => LS.set('tsu_settings', settings);
 const saveChars = () => LS.set('tsu_chars', chars);
-const saveSessions = () => LS.set('tsu_sessions', sessions);
+/* セッションの保存。呼び出し側から見た意味は今まで通り「今のsessionsを保存する」で、
+   変わったのは保存先(IndexedDB)と、待てるようにawaitが要ること。 */
+async function saveSessions() {
+  if (!sessionsReady) return;        // 読み込み前・読み込み失敗時は書かない
+  try {
+    await IDB.sessSync(sessions);
+  } catch (e) {
+    toast('会話の保存に失敗: ' + (e && e.message ? e.message : ''));
+  }
+}
 const saveActive = () => LS.set('tsu_active', active);
 
 const activeChar = () => chars.find(c => c.id === active.charId) || null;
@@ -1251,7 +1296,7 @@ function renderChatBody() {
     });
   });
   box.querySelectorAll('.act-chip').forEach(ch => {
-    ch.addEventListener('click', (e) => {
+    ch.addEventListener('click', async (e) => {
       e.stopPropagation();
       if (busy) return;
       const s2 = activeSession();
@@ -1267,7 +1312,7 @@ function renderChatBody() {
         const spk = lm.charId ? chars.find(x => x.id === lm.charId) : null;
         s2.messages.splice(li, 1);
         s2.updated = Date.now();
-        saveSessions();
+        await saveSessions();
         renderChat();
         generateFor(spk, prevAlts);
       } else if ((ch.dataset.act === 'prev' || ch.dataset.act === 'next') && lm.alts && lm.alts.length > 1) {
@@ -1276,7 +1321,7 @@ function renderChatBody() {
         lm.ai = ai;
         lm.content = lm.alts[ai];
         s2.updated = Date.now();
-        saveSessions();
+        await saveSessions();
         renderChat();
       }
     });
@@ -1315,19 +1360,19 @@ function appendStreamBubble(spk) {
 }
 
 /* ---------------- sessions / chars ---------------- */
-function newSession(charId) {
+async function newSession(charId) {
   const c = chars.find(x => x.id === charId);
   const msgs = c && c.greeting ? [{ role: 'assistant', content: c.greeting }] : [];
   const s = { id: uid(), charId: charId, updated: Date.now(), messages: msgs };
   sessions.unshift(s);
   active.sessionId = s.id;
-  saveSessions(); saveActive();
+  await saveSessions(); saveActive();
   return s;
 }
-function selectChar(id) {
+async function selectChar(id) {
   active.charId = id;
   const latest = sessions.filter(s => s.charId === id).sort((a, b) => b.updated - a.updated)[0];
-  if (latest) active.sessionId = latest.id; else newSession(id);
+  if (latest) active.sessionId = latest.id; else await newSession(id);
   saveActive();
   renderHeader(); renderChat();
 }
@@ -1338,12 +1383,12 @@ function sessionTitle(s) {
   return firstUser ? firstUser.content.slice(0, 26) : '(まだ発言なし)';
 }
 /* スレッド名を付け直す。空にすると自動(最初の発言)に戻る */
-function renameSession(s) {
+async function renameSession(s) {
   const v = prompt('スレッド名', s.name || '');
   if (v === null) return;
   const t = v.trim();
   if (t) s.name = t; else delete s.name;
-  saveSessions();
+  await saveSessions();
   renderSessList();
   toast(t ? '名前を付けた' : '自動の名前に戻した');
 }
@@ -1365,12 +1410,12 @@ function renderCharList() {
       '<div class="li-sub">' + n + 'セッション</div></div>' +
       '<button class="li-act th" aria-label="このキャラのセッション一覧"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h10"/></svg></button>' +
       '<button class="li-act ed" aria-label="編集"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5l4 4L7 21H3v-4L16.5 3.5z"/></svg></button>';
-    row.querySelector('.grow').addEventListener('click', () => { selectChar(c.id); closeScreen('scrChars'); });
-    row.querySelector('.avatar').addEventListener('click', () => { selectChar(c.id); closeScreen('scrChars'); });
+    row.querySelector('.grow').addEventListener('click', async () => { await selectChar(c.id); closeScreen('scrChars'); });
+    row.querySelector('.avatar').addEventListener('click', async () => { await selectChar(c.id); closeScreen('scrChars'); });
     // ≡ はそのキャラに切り替えてセッション一覧を開く
-    row.querySelector('.th').addEventListener('click', (e) => {
+    row.querySelector('.th').addEventListener('click', async (e) => {
       e.stopPropagation();
-      selectChar(c.id);
+      await selectChar(c.id);
       closeScreen('scrChars');
       openSide();
     });
@@ -1451,16 +1496,16 @@ function renderSessList() {
       (prev ? '<div class="li-prev">' + esc(prev) + '</div>' : '') + '</div>' +
       '<button class="li-act ren" aria-label="名前を変える"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5l4 4L7 21H3v-4L16.5 3.5z"/></svg></button>' +
       '<button class="li-act del"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg></button>';
-    row.querySelector('.ren').addEventListener('click', (e) => {
+    row.querySelector('.ren').addEventListener('click', async (e) => {
       e.stopPropagation();
-      renameSession(s);
+      await renameSession(s);
     });
     row.querySelector('.grow').addEventListener('click', () => {
       active.sessionId = s.id;
       active.charId = isRoom(s) ? null : s.charId;
       saveActive(); renderHeader(); renderChat(); closeScreen('scrSessions');
     });
-    row.querySelector('.del').addEventListener('click', (e) => {
+    row.querySelector('.del').addEventListener('click', async (e) => {
       e.stopPropagation();
       if (!confirm('このセッションを削除する?')) return;
       (s.messages || []).forEach(m => imgDelete(m.img));  // 抱えていた画像もIDBから落とす
@@ -1468,13 +1513,13 @@ function renderSessList() {
       if (active.sessionId === s.id) {
         if (isRoom(s)) {
           active.sessionId = null;
-          if (chars.length) { selectChar(chars[0].id); }
+          if (chars.length) { await selectChar(chars[0].id); }
         } else {
           const rest = sessions.filter(x => !isRoom(x) && x.charId === s.charId).sort((a, b) => b.updated - a.updated)[0];
-          if (rest) active.sessionId = rest.id; else if (active.charId) newSession(active.charId);
+          if (rest) active.sessionId = rest.id; else if (active.charId) await newSession(active.charId);
         }
       }
-      saveSessions(); saveActive();
+      await saveSessions(); saveActive();
       renderSessList(); renderHeader(); renderChat();
     });
     box.appendChild(row);
@@ -1855,14 +1900,14 @@ $('ceSave').addEventListener('click', async () => {
     const c = Object.assign({ id: uid() }, data);
     chars.push(c);
     saveChars();
-    selectChar(c.id);
+    await selectChar(c.id);
   }
   saveChars();
   renderHeader(); renderChat(); renderCharList();
   closeScreen('scrCharEdit');
   toast('保存した');
 });
-$('ceDelete').addEventListener('click', () => {
+$('ceDelete').addEventListener('click', async () => {
   if (!editingCharId) return;
   const c = chars.find(x => x.id === editingCharId);
   if (!confirm(c.name + ' を削除する?セッションも全部消える。')) return;
@@ -1877,9 +1922,9 @@ $('ceDelete').addEventListener('click', () => {
   if (active.charId === editingCharId) {
     active.charId = chars.length ? chars[0].id : null;
     active.sessionId = null;
-    if (active.charId) selectChar(active.charId);
+    if (active.charId) await selectChar(active.charId);
   }
-  saveChars(); saveSessions(); saveActive();
+  saveChars(); await saveSessions(); saveActive();
   renderHeader(); renderChat(); renderCharList();
   closeScreen('scrCharEdit'); closeScreen('scrChars');
   toast('削除した');
@@ -1917,7 +1962,7 @@ function renderReMembers() {
   });
   hydrateImgs(box);
 }
-$('reSave').addEventListener('click', () => {
+$('reSave').addEventListener('click', async () => {
   if (reMemberSel.length < 2) { toast('参加キャラを2人以上選んで'); return; }
   const name = $('reName').value.trim() || roomMembers({ charIds: reMemberSel }).map(c => c.name.slice(0, 4)).join('と');
   const scene = $('reScene').value.trim();
@@ -1929,24 +1974,24 @@ $('reSave').addEventListener('click', () => {
     sessions.unshift(r);
     selectRoom(r.id);
   }
-  saveSessions();
+  await saveSessions();
   renderHeader(); renderChat(); renderCharList();
   closeScreen('scrRoomEdit');
   toast('保存した');
 });
-$('reClear').addEventListener('click', () => {
+$('reClear').addEventListener('click', async () => {
   if (!editingRoomId) return;
   const r = sessions.find(s => s.id === editingRoomId);
   if (!r) return;
   if (!confirm('このルームの会話履歴(' + r.messages.length + '件)を全部消す?')) return;
   r.messages = [];
   r.updated = Date.now();
-  saveSessions();
+  await saveSessions();
   renderHeader(); renderChat(); renderCharList();
   closeScreen('scrRoomEdit');
   toast('履歴をクリアした');
 });
-$('reDelete').addEventListener('click', () => {
+$('reDelete').addEventListener('click', async () => {
   if (!editingRoomId) return;
   const r = sessions.find(s => s.id === editingRoomId);
   if (!r) return;
@@ -1954,9 +1999,9 @@ $('reDelete').addEventListener('click', () => {
   sessions = sessions.filter(s => s.id !== editingRoomId);
   if (active.sessionId === editingRoomId) {
     active.sessionId = null;
-    if (chars.length) selectChar(chars[0].id);
+    if (chars.length) await selectChar(chars[0].id);
   }
-  saveSessions(); saveActive();
+  await saveSessions(); saveActive();
   renderHeader(); renderChat(); renderCharList();
   closeScreen('scrRoomEdit');
   toast('削除した');
@@ -2059,17 +2104,17 @@ $('charChip').addEventListener('click', (e) => {
 $('btnAddChar').addEventListener('click', () => openCharEdit(null));
 $('btnSessions').addEventListener('click', openSide);
 $('sessSearch').addEventListener('input', renderSessList);
-$('btnAddSess').addEventListener('click', () => {
+$('btnAddSess').addEventListener('click', async () => {
   if (activeRoom()) { toast('ルームは1つの継続会話。履歴を消すならルーム編集から'); return; }
   if (!active.charId) { toast('先にキャラを選んで'); return; }
-  newSession(active.charId);
+  await newSession(active.charId);
   renderHeader(); renderChat(); closeScreen('scrSessions');
 });
-$('btnNewSess').addEventListener('click', () => {
+$('btnNewSess').addEventListener('click', async () => {
   if (activeRoom()) { toast('ルームは1つの継続会話。履歴を消すならルーム編集から'); return; }
   if (!active.charId) { toast('先にキャラを作って/選んで'); return; }
   if (busy) { toast('生成中は無理'); return; }
-  newSession(active.charId);
+  await newSession(active.charId);
   renderHeader(); renderChat();
   toast('新しいセッション。前のは履歴に残ってる');
 });
@@ -2086,7 +2131,7 @@ function openSheet(idx) {
     const b = document.createElement('button');
     if (danger) b.className = 'danger';
     b.innerHTML = svg + '<span>' + label + '</span>';
-    b.addEventListener('click', () => { closeSheet(); fn(); });
+    b.addEventListener('click', async () => { closeSheet(); await fn(); });
     body.appendChild(b);
   };
   const icCopy = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>';
@@ -2107,10 +2152,10 @@ function openSheet(idx) {
   }
   if (m.role === 'assistant' && idx === sess.messages.length - 1 && idx > 0) {
     const spk = m.charId ? chars.find(x => x.id === m.charId) : null;
-    add('再生成(上書き)', icRegen, () => {
+    add('再生成(上書き)', icRegen, async () => {
       sess.messages.splice(idx, 1);
       sess.updated = Date.now();
-      saveSessions(); renderChat();
+      await saveSessions(); renderChat();
       generateFor(spk);
     });
   }
@@ -2128,12 +2173,12 @@ function openSheet(idx) {
     const icShop = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="21" r="1.5"/><circle cx="19" cy="21" r="1.5"/><path d="M2 3h3l2.6 12.4a2 2 0 0 0 2 1.6h8.8a2 2 0 0 0 2-1.6L22 7H6"/></svg>';
     add('材料を買い物リストへ(API抽出)', icShop, () => extractShopping(m));
   }
-  add('ここから巻き戻し(この発言以降を削除)', icBack, () => {
+  add('ここから巻き戻し(この発言以降を削除)', icBack, async () => {
     const removed = sess.messages[idx];
     if (!confirm('この発言以降の' + (sess.messages.length - idx) + '件を削除して巻き戻す?')) return;
     sess.messages.splice(idx);
     sess.updated = Date.now();
-    saveSessions(); renderChat(); renderHeader();
+    await saveSessions(); renderChat(); renderHeader();
     if (removed.role === 'user') {
       $('input').value = removed.content;
       autosize();
@@ -2200,22 +2245,22 @@ function openModelSheet() {
 $('scrim').addEventListener('click', closeSheet);
 
 /* message edit actions */
-$('meSave').addEventListener('click', () => {
+$('meSave').addEventListener('click', async () => {
   const sess = activeSession();
   if (sess && sess.messages[editIdx]) {
     sess.messages[editIdx].content = $('meText').value;
     sess.updated = Date.now();
-    saveSessions(); renderChat();
+    await saveSessions(); renderChat();
   }
   closeScreen('scrMsgEdit');
 });
-$('meSaveRegen').addEventListener('click', () => {
+$('meSaveRegen').addEventListener('click', async () => {
   const sess = activeSession();
   if (sess && sess.messages[editIdx]) {
     sess.messages[editIdx].content = $('meText').value;
     sess.messages.splice(editIdx + 1);
     sess.updated = Date.now();
-    saveSessions(); renderChat();
+    await saveSessions(); renderChat();
     closeScreen('scrMsgEdit');
     if (isRoom(sess)) roomRound(); else generate();
   } else {
@@ -2301,12 +2346,12 @@ async function sendMessage() {
     } finally { sending = false; }
   }
   let sess = activeSession();
-  if (!sess) sess = newSession(active.charId);
+  if (!sess) sess = await newSession(active.charId);
   const m = { role: 'user', content: text, time: Date.now() };
   if (imgRef) m.img = imgRef;
   sess.messages.push(m);
   sess.updated = Date.now();
-  saveSessions();
+  await saveSessions();
   input.value = ''; autosize();
   pendingImg = ''; renderAttach();
   renderChat();
@@ -2334,7 +2379,7 @@ async function generateFor(spk, prevAlts) {
   let acc = '';
   let ok = true;
   const bubble = appendStreamBubble(c);
-  const commit = (text) => {
+  const commit = async (text) => {
     const nm = { role: 'assistant', content: text, time: Date.now() };
     if (room) nm.charId = c.id;
     if (prevAlts && prevAlts.length) {
@@ -2343,7 +2388,7 @@ async function generateFor(spk, prevAlts) {
     }
     sess.messages.push(nm);
     sess.updated = Date.now();
-    saveSessions();
+    await saveSessions();
   };
   try {
     const hist = await resolveHistImgs(room ? buildRoomHistory(sess, c) : buildHistory(sess));
@@ -2353,14 +2398,14 @@ async function generateFor(spk, prevAlts) {
       scrollBottom();
     }, c, room);
     if (!acc.trim()) throw new Error('空の応答が返ってきた(モデル名や設定を確認)');
-    commit(acc);
+    await commit(acc);
     if (!stripThink(acc).trim()) toast('思考だけで本文が出なかった(モデルの空振り)。再生成すれば大抵出る');
   } catch (err) {
     ok = false;
     if (err && err.name === 'AbortError') {
       roomStop = true;
       if (acc.trim()) {
-        commit(acc);
+        await commit(acc);
         toast('途中で止めた。そこまでは保存');
       } else {
         toast('止めた');
@@ -2812,6 +2857,7 @@ $('impFile').addEventListener('change', (e) => {
   if (!f) return;
   const r = new FileReader();
   r.onload = async () => {
+    const wasReady = sessionsReady;
     try {
       const d = JSON.parse(r.result);
       if (d.app !== 'tsumugi' || !Array.isArray(d.chars) || !Array.isArray(d.sessions)) throw new Error('紡のバックアップファイルではない');
@@ -2825,9 +2871,13 @@ $('impFile').addEventListener('change', (e) => {
           if (isImgData(m.img)) m.img = await imgSave(m.img);
         }
       }
+      // セッションはIndexedDBへ。今入っているものを一度捨ててから入れ直す
+      sessionsReady = false;              // 書き戻す前に他所から保存が走らないよう止める
+      sessions = d.sessions;
+      await IDB.sessSync(d.sessions);
+      localStorage.removeItem('tsu_sessions');   // 旧形式が残っていたら道連れに消す
       LS.set('tsu_migrated_v1', true);
       LS.set('tsu_chars', d.chars);
-      LS.set('tsu_sessions', d.sessions);
       if (d.active) LS.set('tsu_active', d.active);
       if (d.settings) LS.set('tsu_settings', d.settings);
       if (Array.isArray(d.todos)) LS.set('tsu_todos', d.todos);
@@ -2838,6 +2888,9 @@ $('impFile').addEventListener('change', (e) => {
       toast('復元した。再読み込みする');
       setTimeout(() => location.reload(), 600);
     } catch (err) {
+      // 書き戻しの途中でこけたときに保存を止めたままにしない。
+      // ここで戻さないとリロードするまで会話が保存されなくなる
+      sessionsReady = wasReady;
       toast('復元失敗: ' + (err && err.message ? err.message : String(err)));
     }
   };
@@ -2900,12 +2953,20 @@ function renderStorage() {
     '<div class="st-head"><span>localStorage</span><span>' + fmtBytes(u.total) + ' / 5MB</span></div>' +
     '<div class="st-bar"><i class="' + (pct > 80 ? 'full' : '') + '" style="width:' + pct.toFixed(1) + '%"></i></div>' +
     u.rows.map(r => '<div class="st-row"><span>' + esc(r.k) + '</span><span>' + fmtBytes(r.b) + '</span></div>').join('') +
-    '<div class="st-head" style="margin-top:14px"><span>画像(IndexedDB)</span><span id="stIdb">計測中…</span></div>';
+    '<div class="st-head" style="margin-top:14px"><span>画像(IndexedDB)</span><span id="stIdb">計測中…</span></div>' +
+    '<div class="st-head"><span>会話(IndexedDB)</span><span id="stIdbSess">計測中…</span></div>';
   IDB.stat().then(s => {
     const el = $('stIdb');
     if (el) el.textContent = s.n + '件 · ' + fmtBytes(s.bytes);
   }).catch(() => {
     const el = $('stIdb');
+    if (el) el.textContent = '読めなかった';
+  });
+  IDB.sessStat().then(s => {
+    const el = $('stIdbSess');
+    if (el) el.textContent = s.n + 'セッション · ' + fmtBytes(s.bytes);
+  }).catch(() => {
+    const el = $('stIdbSess');
     if (el) el.textContent = '読めなかった';
   });
 }
@@ -3396,16 +3457,66 @@ async function migrateImages() {
       if (isImgData(m.img)) { m.img = await imgSave(m.img); n++; }
     }
   }
-  if (n) { saveChars(); saveSessions(); }
+  if (n) { saveChars(); await saveSessions(); }
   LS.set('tsu_migrated_v1', true);
   if (n) toast('画像' + n + '件をIndexedDBへ移した');
 }
 
+/* セッションをIndexedDBから読む。
+   localStorageに旧データ(tsu_sessions)が残っていれば、まずIndexedDBへ写す。
+   写した分が本当にストアに入ったか読み直して確かめるまで、localStorageは消さない。
+   途中で落ちても次回起動でやり直せばいいだけになる。 */
+async function loadSessions() {
+  const raw = localStorage.getItem('tsu_sessions');
+  let old = null;
+  if (raw) {
+    try { old = JSON.parse(raw); } catch (e) { old = null; }
+    if (!Array.isArray(old)) old = null;
+  }
+  if (old && old.length) {
+    // IDBのキーはid。万一idの無いものが混じっていると書き込みごと失敗して
+    // 移行が永久に進まなくなるので、ここで振っておく
+    old.forEach(s => { if (!s.id) s.id = uid(); });
+    // 移行の途中で落ちた場合の作り直しに備えて、既にIDB側にある分は新しい方を残す
+    const cur = await IDB.sessAll();
+    const byId = {};
+    cur.forEach(s => { byId[s.id] = s; });
+    const add = old.filter(s => {
+      const e = byId[s.id];
+      return !e || (s.updated || 0) > (e.updated || 0);
+    });
+    if (add.length) await IDB.sessPut(add);
+    const keys = await IDB.sessKeys();
+    const has = {};
+    keys.forEach(k => { has[k] = 1; });
+    const missing = old.filter(s => !has[s.id]).length;
+    if (missing) throw new Error('セッション' + missing + '件をIndexedDBに書けなかった');
+    localStorage.removeItem('tsu_sessions');     // ここまで来て初めて消す
+    toast('会話' + old.length + '件をIndexedDBへ移した');
+  } else if (raw) {
+    localStorage.removeItem('tsu_sessions');     // 空配列や壊れた値は移すものが無いので捨てる
+  }
+  const all = await IDB.sessAll();
+  // localStorage時代は新しいものが先頭だった(unshift)。同じ並びに揃えておく
+  all.sort((a, b) => (b.updated || 0) - (a.updated || 0));
+  sessions = all;
+  sessionsReady = true;
+}
+
 (async function init() {
   try {
-    await migrateImages();
+    await loadSessions();
   } catch (e) {
-    // 移行できなくても元のBase64はlocalStorageに残っているので表示は続く
+    // 読めなくてもlocalStorageに残っている分があれば表示だけはする。
+    // sessionsReadyが立たないので保存は走らず、元データを壊すこともない。
+    sessions = LS.get('tsu_sessions', []);
+    toast('会話の読み込みに失敗。表示のみで保存はされない: ' + (e && e.message ? e.message : ''));
+  }
+  try {
+    // セッション側を読めていないと画像の移行が中途半端になるので、そのときはやらない
+    if (sessionsReady) await migrateImages();
+  } catch (e) {
+    // 移行できなくても元のBase64はそのまま残っているので表示は続く
     toast('画像の移行に失敗。データはそのまま残っている');
   }
   if (active.charId && !chars.find(c => c.id === active.charId)) active.charId = null;
@@ -3417,7 +3528,7 @@ async function migrateImages() {
     if (!active.charId && chars.length) active.charId = chars[0].id;
     if (active.charId && (!active.sessionId || isRoom(s0))) {
       const latest = sessions.filter(s => !isRoom(s) && s.charId === active.charId).sort((a, b) => b.updated - a.updated)[0];
-      if (latest) active.sessionId = latest.id; else newSession(active.charId);
+      if (latest) active.sessionId = latest.id; else await newSession(active.charId);
     }
   }
   saveActive();
