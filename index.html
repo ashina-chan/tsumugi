@@ -156,6 +156,20 @@ mark{background:rgba(227,161,79,.35); color:inherit; border-radius:3px; padding:
 }
 .empty .mark{font-family:var(--mincho); font-size:42px; color:var(--amber); opacity:.85;}
 
+/* ---------- 最初/最新へのジャンプ ---------- */
+/* #chat(スクロール領域)の最後の子。stickyで下端に貼り付く */
+#jumpBar{
+  display:none; position:sticky; bottom:2px;
+  width:max-content; margin-left:auto; gap:6px; padding:6px 0 2px;
+}
+#jumpBar.show{display:flex;}
+#jumpBar button{
+  width:34px; height:34px; border-radius:50%; display:grid; place-items:center;
+  color:var(--muted); background:var(--panel);
+  border:1px solid var(--line); box-shadow:0 2px 10px rgba(0,0,0,.4);
+}
+#jumpBar button:active{color:var(--text); border-color:var(--amber);}
+
 /* ---------- composer ---------- */
 footer.composer{
   display:flex; align-items:flex-end; gap:8px;
@@ -1110,6 +1124,7 @@ function renderHeaderBody() {
 function renderChat() {
   renderChatBody();
   hydrateImgs($('chat'));
+  updateJump();
 }
 function renderChatBody() {
   const box = $('chat');
@@ -1164,7 +1179,17 @@ function renderChatBody() {
         (m.time ? '<div class="msg-time">' + timeStr(m.time) + '</div>' : '') + '</div>';
     }
   });
+  html += '<div id="jumpBar">' +
+    '<button data-jump="top" aria-label="最初へ"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>' +
+    '<button data-jump="bottom" aria-label="最新へ"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg></button>' +
+    '</div>';
   box.innerHTML = html;
+  box.querySelectorAll('#jumpBar button').forEach(b => {
+    b.addEventListener('click', () => {
+      // scrollTo({behavior:'smooth'})は環境によって無視されるので直接入れる
+      box.scrollTop = b.dataset.jump === 'top' ? 0 : box.scrollHeight;
+    });
+  });
   box.querySelectorAll('.msg').forEach(el => {
     el.addEventListener('click', (e) => {
       // 思考ログの開閉はシートを出さない(summaryのタップが親まで伝わるため)
@@ -1209,6 +1234,14 @@ function scrollBottom() {
   const box = $('chat');
   box.scrollTop = box.scrollHeight;
 }
+/* 1画面に収まっているうちはジャンプボタンを出さない。
+   画像の読み込みで高さが後から変わるので、スクロールのたびに見直す */
+function updateJump() {
+  const box = $('chat');
+  const bar = $('jumpBar');
+  if (bar) bar.classList.toggle('show', box.scrollHeight > box.clientHeight + 120);
+}
+$('chat').addEventListener('scroll', updateJump);
 
 /* streaming bubble (not yet committed to history) */
 function appendStreamBubble(spk) {
@@ -1217,7 +1250,8 @@ function appendStreamBubble(spk) {
   wrap.className = 'msg ai';
   wrap.innerHTML = '<div class="who" style="color:' + c.color + '">' + miniAv(c) + '<span>' + esc(c.name) + '</span></div>' +
     '<div class="bubble" style="border-left-color:' + c.color + '"><span class="txt"></span><span class="caret"></span></div>';
-  $('chat').appendChild(wrap);
+  // ジャンプボタンは常に最後の子でいてほしいので、その手前に差し込む
+  $('chat').insertBefore(wrap, $('jumpBar'));
   hydrateImgs(wrap);
   scrollBottom();
   const txt = wrap.querySelector('.txt');
@@ -1246,8 +1280,19 @@ function selectChar(id) {
 }
 function sessionTitle(s) {
   if (isRoom(s)) return '👥 ' + (s.name || 'ルーム');
+  if (s.name) return s.name;                 // 手で付けた名前があれば優先
   const firstUser = s.messages.find(m => m.role === 'user');
   return firstUser ? firstUser.content.slice(0, 26) : '(まだ発言なし)';
+}
+/* スレッド名を付け直す。空にすると自動(最初の発言)に戻る */
+function renameSession(s) {
+  const v = prompt('スレッド名', s.name || '');
+  if (v === null) return;
+  const t = v.trim();
+  if (t) s.name = t; else delete s.name;
+  saveSessions();
+  renderSessList();
+  toast(t ? '名前を付けた' : '自動の名前に戻した');
 }
 
 function renderCharList() {
@@ -1351,7 +1396,12 @@ function renderSessList() {
       '<div class="grow"><div class="li-title">' + (cur ? '▸ ' : '') + esc(sessionTitle(s)) + '</div>' +
       '<div class="li-sub">' + timeStr(s.updated) + ' · ' + s.messages.length + '発言</div>' +
       (prev ? '<div class="li-prev">' + esc(prev) + '</div>' : '') + '</div>' +
+      '<button class="li-act ren" aria-label="名前を変える"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5l4 4L7 21H3v-4L16.5 3.5z"/></svg></button>' +
       '<button class="li-act del"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg></button>';
+    row.querySelector('.ren').addEventListener('click', (e) => {
+      e.stopPropagation();
+      renameSession(s);
+    });
     row.querySelector('.grow').addEventListener('click', () => {
       active.sessionId = s.id;
       active.charId = isRoom(s) ? null : s.charId;
