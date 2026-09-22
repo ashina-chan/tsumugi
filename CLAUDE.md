@@ -100,6 +100,7 @@ localStorageの5MB上限を避けるため、**画像の実体はIndexedDB(`tsum
 | `tsu_settings` | 温度・最大トークン・履歴上限・thinking など全体の値 |
 | `tsu_todos` `tsu_memos` `tsu_shop` `tsu_shopHist` | TODO・メモ・買い物リスト |
 | `tsu_migrated_v1` | 画像のIndexedDB移行が済んだかのフラグ |
+| `tsu_lastExport` | 最後にエクスポートした時刻。14日空くと起動時にバナーで催促する |
 
 キャラが持つもの（どちらも**常に固定長**で、空の枠を含む）:
 

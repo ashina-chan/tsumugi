@@ -156,6 +156,32 @@ mark{background:rgba(227,161,79,.35); color:inherit; border-radius:3px; padding:
 }
 .empty .mark{font-family:var(--mincho); font-size:42px; color:var(--amber); opacity:.85;}
 
+/* ---------- バックアップの催促 ---------- */
+#bkBanner{
+  display:none; align-items:center; gap:8px; padding:9px 12px;
+  background:rgba(227,161,79,.13); border-bottom:1px solid var(--line);
+  flex-shrink:0; font-size:12.5px; line-height:1.5;
+}
+#bkBanner.show{display:flex;}
+#bkBanner .grow{flex:1; min-width:0;}
+#bkBanner .bk-x{
+  width:28px; height:28px; border-radius:8px; flex-shrink:0;
+  display:grid; place-items:center; color:var(--muted); font-size:18px;
+}
+#bkBanner .bk-x:active{background:rgba(255,255,255,.06); color:var(--text);}
+
+/* ---------- ストレージ使用量 ---------- */
+#stStorage{font-size:12px; color:var(--muted);}
+.st-head{
+  display:flex; justify-content:space-between; gap:10px;
+  color:var(--text); font-size:13px; margin-bottom:5px;
+}
+.st-bar{height:6px; border-radius:3px; background:var(--field); overflow:hidden; margin-bottom:8px;}
+.st-bar i{display:block; height:100%; background:var(--amber);}
+.st-bar i.full{background:var(--danger);}
+.st-row{display:flex; justify-content:space-between; gap:10px; padding:2px 0;}
+.st-row span:first-child{overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+
 /* ---------- 最初/最新へのジャンプ ---------- */
 /* #chat(スクロール領域)の最後の子。stickyで下端に貼り付く */
 #jumpBar{
@@ -406,6 +432,12 @@ input[type=range]{padding:0; height:32px; accent-color:var(--amber); background:
   </button>
 </header>
 
+<div id="bkBanner">
+  <span class="grow" id="bkMsg"></span>
+  <button class="act-chip" id="bkGo">エクスポート</button>
+  <button class="bk-x" id="bkClose" aria-label="閉じる">×</button>
+</div>
+
 <main id="chat"></main>
 
 <div id="roomBar"></div>
@@ -596,6 +628,10 @@ input[type=range]{padding:0; height:32px; accent-color:var(--amber); background:
     <button class="btn ghost" id="btnImport">JSONから復元(インポート)</button>
     <input type="file" id="impFile" accept=".json,application/json" style="display:none">
     <p class="hint">キャラ・セッション・記憶・設定を丸ごと保存/復元。ファイルにはAPIキーも含まれるので人に渡さないこと。localStorageはブラウザ都合で消えることがあるから、定期的にエクスポート推奨。</p>
+
+    <label style="margin-top:22px">ストレージ使用量</label>
+    <div id="stStorage"></div>
+    <p class="hint">localStorageの上限はブラウザ次第だがおおむね5MB。いっぱいになると保存に失敗するので、その前に要らないセッションを消すかエクスポートして整理すること。画像はIndexedDBにあり、この5MBには含まれない。</p>
     <p class="hint" style="margin-top:18px">APIキーはこの端末のブラウザ(localStorage)にだけ保存される。外部には送らない——APIリクエスト以外には。端末を人に貸すときだけ注意。</p>
   </div>
 </div>
@@ -733,10 +769,27 @@ const IDB = (() => {
     t.onerror = () => rej(t.error);
     t.onabort = () => rej(t.error);
   }));
+  // 件数と合計サイズ。getAll()だと全画像をメモリに載せてしまうのでカーソルで数える
+  const stat = () => open().then(db => new Promise((res, rej) => {
+    const t = db.transaction(STORE, 'readonly');
+    const rq = t.objectStore(STORE).openCursor();
+    let n = 0, bytes = 0;
+    rq.onsuccess = () => {
+      const c = rq.result;
+      if (!c) return;
+      n++;
+      bytes += ((c.value && c.value.data) || '').length;   // Base64はASCIIなので1文字≒1バイト
+      c.continue();
+    };
+    t.oncomplete = () => res({ n: n, bytes: bytes });
+    t.onerror = () => rej(t.error);
+    t.onabort = () => rej(t.error);
+  }));
   return {
     get: (id) => run('readonly', st => st.get(id)),
     put: (rec) => run('readwrite', st => st.put(rec)),
-    del: (id) => run('readwrite', st => st.delete(id))
+    del: (id) => run('readwrite', st => st.delete(id)),
+    stat: stat
   };
 })();
 
@@ -2727,7 +2780,30 @@ $('btnExport').addEventListener('click', async () => {
   a.download = 'tsumugi_backup_' + stamp + '.json';
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  LS.set('tsu_lastExport', Date.now());
+  $('bkBanner').classList.remove('show');
   toast('エクスポートした');
+});
+
+/* ---------------- バックアップの催促 ----------------
+   localStorageはブラウザ都合で消えるので、間が空いたら起動時に一度だけ知らせる。
+   閉じたらその起動中は出さない(次の起動でまた出る)。 */
+const BK_DAYS = 14;
+function checkBackup() {
+  const last = LS.get('tsu_lastExport', 0);
+  if (last && Date.now() - last < BK_DAYS * 86400000) return;
+  $('bkMsg').textContent = last
+    ? '最後のバックアップから' + Math.floor((Date.now() - last) / 86400000) + '日経ってるよ。エクスポートする?'
+    : 'まだ一度もバックアップしてない。エクスポートする?';
+  $('bkBanner').classList.add('show');
+  scrollBottom();          // バナーの分だけチャットが縮むので下端を取り直す
+  updateJump();
+}
+$('bkGo').addEventListener('click', () => $('btnExport').click());
+$('bkClose').addEventListener('click', () => {
+  $('bkBanner').classList.remove('show');
+  scrollBottom();
+  updateJump();
 });
 $('btnImport').addEventListener('click', () => $('impFile').click());
 $('impFile').addEventListener('change', (e) => {
@@ -2795,9 +2871,49 @@ $('btnMemSum').addEventListener('click', async () => {
   closeScreen('scrSessions');
 });
 
+/* ---------------- ストレージ使用量 ----------------
+   実際の上限は測れないので、ブラウザで一般的な5MBを目安として出す。 */
+const LS_QUOTA = 5 * 1024 * 1024;
+function fmtBytes(b) {
+  if (b < 1024) return b + 'B';
+  if (b < 1024 * 1024) return (b / 1024).toFixed(1) + 'KB';
+  return (b / 1024 / 1024).toFixed(2) + 'MB';
+}
+function lsUsage() {
+  const rows = [];
+  let total = 0;
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    const v = localStorage.getItem(k) || '';
+    const b = (k.length + v.length) * 2;   // localStorageはUTF-16(1文字2バイト)で数えられる
+    rows.push({ k: k, b: b });
+    total += b;
+  }
+  rows.sort((a, b) => b.b - a.b);
+  return { rows: rows, total: total };
+}
+function renderStorage() {
+  const box = $('stStorage');
+  const u = lsUsage();
+  const pct = Math.min(100, u.total / LS_QUOTA * 100);
+  box.innerHTML =
+    '<div class="st-head"><span>localStorage</span><span>' + fmtBytes(u.total) + ' / 5MB</span></div>' +
+    '<div class="st-bar"><i class="' + (pct > 80 ? 'full' : '') + '" style="width:' + pct.toFixed(1) + '%"></i></div>' +
+    u.rows.map(r => '<div class="st-row"><span>' + esc(r.k) + '</span><span>' + fmtBytes(r.b) + '</span></div>').join('') +
+    '<div class="st-head" style="margin-top:14px"><span>画像(IndexedDB)</span><span id="stIdb">計測中…</span></div>';
+  IDB.stat().then(s => {
+    const el = $('stIdb');
+    if (el) el.textContent = s.n + '件 · ' + fmtBytes(s.bytes);
+  }).catch(() => {
+    const el = $('stIdb');
+    if (el) el.textContent = '読めなかった';
+  });
+}
+
 /* ---------------- settings UI ---------------- */
 function openSettings() {
   renderEndpoints();
+  renderStorage();
   $('setTemp').value = settings.temperature;
   $('tempVal').textContent = Number(settings.temperature).toFixed(2);
   $('setMaxTok').value = settings.maxTokens;
@@ -3306,6 +3422,7 @@ async function migrateImages() {
   }
   saveActive();
   renderHeader(); renderChat(); renderTodoBadge();
+  checkBackup();
 })();
 </script>
 <script>
